@@ -63,8 +63,15 @@ function summary(md) {
   else info(md);
 }
 function sudo(args) {
-  // Best-effort privileged command; throws on failure so callers can react.
-  execFileSync("sudo", args, { stdio: ["ignore", "ignore", "pipe"] });
+  // Non-interactive privileged command; throws on failure so callers can react.
+  execFileSync("sudo", ["-n", ...args], { stdio: ["ignore", "ignore", "pipe"] });
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Normalize IPv4-mapped IPv6 (::ffff:1.2.3.4) to plain IPv4 so the two forms
+// dedupe into one destination.
+function normalizeIp(ip) {
+  return ip && ip.toLowerCase().startsWith("::ffff:") ? ip.slice(7) : ip;
 }
 
 // ── Endpoint parsing / resolution ───────────────────────────────────────────
@@ -161,6 +168,113 @@ async function emit(link, event) {
   }
 }
 
+// ── DNS capture ─────────────────────────────────────────────────────────────
+
+/// First upstream nameserver from /etc/resolv.conf (skipping our own loopback).
+function currentUpstream() {
+  try {
+    const ns = fs
+      .readFileSync("/etc/resolv.conf", "utf8")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.startsWith("nameserver"))
+      .map((l) => l.split(/\s+/)[1])
+      .filter((ip) => ip && ip !== "127.0.0.1");
+    return ns[0] || "127.0.0.53";
+  } catch {
+    return "127.0.0.53";
+  }
+}
+
+/// Can we resolve a known name through `server`?
+async function resolvesVia(server) {
+  try {
+    const { Resolver } = require("node:dns").promises;
+    const r = new Resolver({ timeout: 1500, tries: 1 });
+    r.setServers([server]);
+    await Promise.race([
+      r.resolve4("github.com"),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 2000)),
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/// Start the local DNS forwarder and route the system resolver through it.
+/// Best-effort: on any failure we restore and fall back to reverse DNS.
+async function startDnsCapture() {
+  const out = {
+    active: false,
+    log: path.join(os.tmpdir(), "legion-dns.log"),
+    backup: path.join(os.tmpdir(), "resolv.conf.legion.bak"),
+  };
+  try {
+    fs.writeFileSync(out.log, "");
+    const upstream = currentUpstream();
+    const cap = path.join(__dirname, "dnscap.js");
+    // Bind :53 requires root → run under sudo, detached.
+    const child = spawn("sudo", ["-n", process.execPath, cap, out.log, upstream, "53"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    child.unref();
+
+    await sleep(700);
+    if (!(await resolvesVia("127.0.0.1"))) {
+      throw new Error("local resolver not answering");
+    }
+    sudo(["cp", "/etc/resolv.conf", out.backup]);
+    const tmp = path.join(os.tmpdir(), "resolv.legion");
+    fs.writeFileSync(tmp, "nameserver 127.0.0.1\noptions timeout:2 attempts:2\n");
+    sudo(["cp", tmp, "/etc/resolv.conf"]);
+    out.active = true;
+    info(`   DNS capture active (resolver → local logger → ${upstream})`);
+  } catch (e) {
+    warn(`DNS capture unavailable (${e.message}); falling back to reverse DNS`);
+    try {
+      sudo(["pkill", "-f", "dnscap.js"]);
+    } catch {
+      /* nothing to kill */
+    }
+    out.active = false;
+  }
+  return out;
+}
+
+/// Parse the DNS-capture log into a normalized ip → domain map.
+function readDnsMap(logFile) {
+  const map = {};
+  try {
+    for (const line of fs.readFileSync(logFile, "utf8").split("\n")) {
+      const tab = line.indexOf("\t");
+      if (tab === -1) continue;
+      const ip = normalizeIp(line.slice(0, tab).trim());
+      const name = line.slice(tab + 1).trim();
+      if (ip && name) map[ip] = name;
+    }
+  } catch {
+    /* no log */
+  }
+  return map;
+}
+
+/// Stop the DNS forwarder and restore the original resolver config.
+function stopDnsCapture(dns) {
+  if (!dns || !dns.active) return;
+  try {
+    sudo(["pkill", "-f", "dnscap.js"]);
+  } catch {
+    /* already gone */
+  }
+  try {
+    if (dns.backup) sudo(["cp", dns.backup, "/etc/resolv.conf"]);
+  } catch {
+    /* best-effort restore */
+  }
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 async function main() {
   const policy = input("egress-policy", "audit").toLowerCase();
@@ -187,6 +301,13 @@ async function main() {
   fs.writeFileSync(logFile, "");
   const pid = startMonitor(logFile, interval);
 
+  // Optional DNS capture: route the resolver through a local logging forwarder
+  // so connections map to the exact domains the job resolved (beats reverse DNS).
+  let dnsCap = { active: false, log: "", backup: "" };
+  if (boolInput("dns-capture", true)) {
+    dnsCap = await startDnsCapture();
+  }
+
   let enforced = false;
   if (block) {
     try {
@@ -210,6 +331,7 @@ async function main() {
       link,
       ipToHost,
       allowIps: [...v4, ...v6],
+      dns: dnsCap,
       startedAt: new Date().toISOString(),
     }),
   );
@@ -244,32 +366,37 @@ async function post() {
     return; // nothing to report (e.g. non-Linux skip)
   }
 
-  // Stop the monitor.
+  // Stop the monitor and DNS forwarder (restoring the resolver).
   try {
     process.kill(st.pid, "SIGTERM");
   } catch {
     /* already gone */
   }
+  stopDnsCapture(st.dns);
 
-  // Tally observed peers as ip|port.
+  // Tally observed peers as ip|port (IPv4-mapped IPv6 normalized to IPv4).
   const counts = new Map();
   try {
     for (const line of fs.readFileSync(st.logFile, "utf8").split("\n")) {
       const peer = line.trim();
       if (!peer.includes(":")) continue;
-      const { ip, port } = splitPeer(peer);
+      const parsed = splitPeer(peer);
+      const ip = normalizeIp(parsed.ip);
       if (!ip || isLocal(ip)) continue;
-      const key = `${ip}|${port}`;
+      const key = `${ip}|${parsed.port}`;
       counts.set(key, (counts.get(key) || 0) + 1);
     }
   } catch {
     /* no log */
   }
 
-  // Resolve hostnames: the forward allowlist map first (authoritative), then
-  // reverse DNS (PTR) for everything else so destinations read as names, not IPs.
+  // Resolve hostnames, best source first:
+  //   1. DNS capture — the exact domains the job resolved (most accurate)
+  //   2. forward allowlist map (GitHub/operator endpoints)
+  //   3. reverse DNS (PTR) for anything still unnamed
+  const dnsMap = st.dns && st.dns.log ? readDnsMap(st.dns.log) : {};
   const uniqueIps = [...new Set([...counts.keys()].map((k) => k.split("|")[0]))];
-  const hostMap = { ...(st.ipToHost || {}) };
+  const hostMap = { ...(st.ipToHost || {}), ...dnsMap };
   await Promise.all(
     uniqueIps
       .filter((ip) => !hostMap[ip])
@@ -303,8 +430,10 @@ async function post() {
   const rows = [...groups.entries()].sort((a, b) => b[1].conns - a[1].conns);
   const unresolved = rows.filter(([, g]) => !g.host).length;
 
+  const captureMode = st.dns && st.dns.active ? "DNS capture" : "reverse DNS";
   let md = "## 🛡 Legion Harden Runner — outbound connections\n\n";
   md += `**Egress policy:** \`${st.policy}\`${st.enforced ? " (enforced)" : ""}  ·  `;
+  md += `**Resolution:** ${captureMode}  ·  `;
   md += `**Started:** ${st.startedAt}\n\n`;
 
   if (rows.length === 0) {
@@ -321,7 +450,10 @@ async function post() {
     }
     md += `\n_${rows.length} unique destination(s) observed._`;
     if (unresolved) {
-      md += ` _(${unresolved} had no PTR record — common for CDNs/cloud IPs — so the raw address is shown.)_`;
+      const tip = st.dns && st.dns.active
+        ? "connected by raw IP (no DNS lookup), so no domain is known"
+        : "had no PTR record — enable `dns-capture` for exact domains";
+      md += ` _(${unresolved} ${tip}.)_`;
     }
     md += "\n";
   }

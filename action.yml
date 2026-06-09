@@ -36,6 +36,13 @@ inputs:
     description: 'Optional Legion desktop endpoint (e.g. http://host:3000) to stream job egress events to.'
     required: false
     default: ''
+  dns-capture:
+    description: >-
+      Route the resolver through a local logging forwarder to map connections to
+      the exact domains the job resolved (more accurate than reverse DNS).
+      Requires sudo; falls back to reverse DNS if unavailable.
+    required: false
+    default: 'true'
   sample-interval:
     description: 'Seconds between egress samples for the monitor.'
     required: false

@@ -140,6 +140,7 @@ At the end of the job you get:
 | `egress-policy` | `audit` | `audit` (never breaks builds) or `block` (default-deny allowlist). |
 | `allowed-endpoints` | `` | `host` / `host:port` entries to permit in block mode. |
 | `allow-github` | `true` | Always allow GitHub + Actions endpoints. |
+| `dns-capture` | `true` | Route the resolver through a local logger to map connections to the **exact domains** the job resolved (more accurate than reverse DNS). Falls back to reverse DNS if sudo is unavailable. |
 | `disable-sudo` | `false` | Revoke the runner user's sudo after setup. |
 | `disable-telemetry` | `false` | Suppress lifecycle events (stay fully local). |
 | `legion-link` | `` | Stream egress events to a Legion desktop endpoint. |
