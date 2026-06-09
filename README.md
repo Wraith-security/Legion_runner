@@ -185,7 +185,8 @@ as an allowlisted domain resolves, the firewall is opened for *its current IPs*
 before the connection is made. So CDN/cloud endpoints that rotate IPs
 (`*.crates.io`, apt mirrors) keep working without pinning addresses, while
 everything else is dropped. Allowlist entries match subdomains too
-(`github.com` allows `api.github.com`).
+(`github.com` allows `api.github.com`). **Denied attempts are surfaced** in the
+job summary (parsed from the firewall log) rather than dropped silently.
 
 > **Optional, for teams who want a reviewable allowlist in git:** set
 > `learn: true` in an audit run to also write `.legion/egress-allowed.txt`, which

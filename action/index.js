@@ -87,6 +87,18 @@ function sudo(args) {
   }
   throw new Error("no privilege (need root or sudo)");
 }
+// Privileged command capturing stdout (best-effort; "" on failure).
+function sudoOut(args) {
+  try {
+    const argv = IS_ROOT ? args : hasSudo() ? ["-n", ...args] : null;
+    if (!argv) return "";
+    const bin = IS_ROOT ? args[0] : "sudo";
+    const real = IS_ROOT ? args.slice(1) : argv;
+    return execFileSync(bin, real, { stdio: ["ignore", "pipe", "ignore"] }).toString();
+  } catch {
+    return "";
+  }
+}
 // Privileged detached spawn, with an error handler so a missing binary can
 // never crash the action.
 function spawnPrivileged(cmd, argv, opts) {
@@ -245,8 +257,45 @@ function applyEgressBlock(ipv4, ipv6) {
     sudo([bin, "-A", CHAIN, "-p", "udp", "--dport", "53", "-j", "ACCEPT"]);
     sudo([bin, "-A", CHAIN, "-p", "tcp", "--dport", "53", "-j", "ACCEPT"]);
     for (const ip of ips) sudo([bin, "-A", CHAIN, "-d", ip, "-j", "ACCEPT"]);
+    // Log denied packets (rate-limited) before dropping, so post() can surface
+    // exactly what was blocked instead of dropping silently.
+    try {
+      sudo([bin, "-A", CHAIN, "-m", "limit", "--limit", "60/min", "--limit-burst", "20",
+        "-j", "LOG", "--log-prefix", "LEGION-DENY ", "--log-level", "4"]);
+    } catch {
+      /* LOG target unavailable — enforcement still works, just no deny list */
+    }
     sudo([bin, "-A", CHAIN, "-j", "DROP"]); // default-deny
   }
+}
+
+/// Parse denied destinations from kernel-log lines our LOG rule emitted.
+/// Pure (testable): returns unique "ip:port" strings.
+function parseDeniedLog(text) {
+  const out = new Set();
+  for (const line of (text || "").split("\n")) {
+    if (!line.includes("LEGION-DENY")) continue;
+    const dst = line.match(/\bDST=([0-9a-fA-F:.]+)/);
+    const dpt = line.match(/\bDPT=(\d+)/);
+    if (dst) out.add(`${normalizeIp(dst[1])}:${dpt ? dpt[1] : "?"}`);
+  }
+  return [...out];
+}
+
+/// Read the kernel log (best-effort, needs privilege) and return denied peers.
+function readDeniedDestinations() {
+  for (const cmd of [["dmesg"], ["journalctl", "-k", "--no-pager", "-n", "2000"]]) {
+    try {
+      const out = sudoOut(cmd);
+      if (out) {
+        const denied = parseDeniedLog(out);
+        if (denied.length) return denied;
+      }
+    } catch {
+      /* try next source */
+    }
+  }
+  return [];
 }
 
 function disableSudo() {
@@ -611,10 +660,26 @@ async function post() {
         : "had no PTR record — enable `dns-capture` for exact domains";
       md += ` _(${unresolved} ${tip}.)_`;
     }
-    if (st.policy === "block") {
-      md += " _Denied attempts are dropped by the firewall and don't appear here._";
-    }
     md += "\n";
+  }
+
+  // Blocked attempts: in block mode, surface what the firewall denied (parsed
+  // from the kernel log our LOG rule wrote) instead of dropping silently.
+  if (st.policy === "block") {
+    const denied = readDeniedDestinations();
+    if (denied.length) {
+      md += "\n### ⛔ Blocked attempts\n";
+      md += "| Destination | Address |\n|---|---|\n";
+      for (const peer of denied.slice(0, 50)) {
+        const ip = peer.replace(/:\d+$/, "").replace(/^\[|\]$/g, "");
+        const host = hostMap[ip] || (await reverseLookup(ip)) || "—";
+        md += `| ${host === "—" ? "—" : host} | \`${peer}\` |\n`;
+      }
+      md += `\n_${denied.length} denied destination(s)._\n`;
+    } else {
+      md += "\n_No egress was denied (everything the job reached was allowlisted), ";
+      md += "or kernel-log access was unavailable to enumerate drops._\n";
+    }
   }
 
   // Persist the learned baseline to the Actions cache so a later block run can
@@ -711,11 +776,25 @@ async function reverseLookup(ip) {
 }
 
 // ── entrypoint: detect main vs post via saved state ─────────────────────────
-(async () => {
-  try {
-    if (process.env.STATE_isPost === "true") await post();
-    else await main();
-  } catch (e) {
-    warn(`Legion Harden Runner error: ${e.stack || e}`);
-  }
-})();
+// Only runs when executed as a script; `require()` (tests) is side-effect free.
+if (require.main === module) {
+  (async () => {
+    try {
+      if (process.env.STATE_isPost === "true") await post();
+      else await main();
+    } catch (e) {
+      warn(`Legion Harden Runner error: ${e.stack || e}`);
+    }
+  })();
+}
+
+// Pure helpers exported for the test suite (action/index.test.js).
+module.exports = {
+  normalizeIp,
+  isLocal,
+  splitPeer,
+  decisionFor,
+  baselineFrom,
+  parseEndpoints,
+  parseDeniedLog,
+};
