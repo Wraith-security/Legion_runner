@@ -164,3 +164,23 @@ jobs:
       - name: Attach binary to the release
         run: gh release upload "${{ needs.release.outputs.tag }}" target/release/legionr-bpf --clobber
 
+  # ── Build the file-integrity agent and attach it to the release ────────────
+  # legionr-fim is plain stable Rust (no eBPF toolchain), built from the main
+  # workspace. The action downloads it at runtime so `file-integrity: auto`
+  # engages without the consumer installing anything.
+  fim:
+    name: Build & attach legionr-fim
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build legionr-fim (release)
+        run: cargo build --release -p legionr-fim
+      - name: Attach binary to the release
+        run: gh release upload "${{ needs.release.outputs.tag }}" target/release/legionr-fim --clobber
+

@@ -11,6 +11,17 @@ Unreleased section.
 
 ## [Unreleased]
 
+### Added
+- **File-integrity / tamper detection (Rust `legionr-fim` agent)**: snapshots
+  high-value tamper targets at job start (credential/config files, `.git`
+  config + hooks, and checked-out source) and diffs them at job end, surfacing
+  anything overwritten, deleted, or chmod'd in the summary. Only sha256 hashes
+  are stored — never contents. New inputs `file-integrity` (auto|off) and
+  `fim-extra-paths`. `file-integrity: auto` downloads the agent from the latest
+  release (plain stable Rust, no eBPF toolchain) and degrades to a silent skip
+  if unavailable. Logic lives in `legionr-core::fim` (unit-tested); the binary
+  is a release asset like `legionr-bpf`, built + attached by `release.yml`.
+
 ### Changed
 - **Name more destinations**: route glibc `getaddrinfo` (curl/apt/cargo/git)
   through the DNS-capture forwarder via an `nsswitch.conf` reroute, so hosts

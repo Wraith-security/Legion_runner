@@ -66,6 +66,21 @@ inputs:
     description: 'Seconds between egress samples for the monitor.'
     required: false
     default: '3'
+  file-integrity:
+    description: >-
+      Detect file tampering during the job. The Rust legionr-fim agent snapshots
+      high-value targets at job start (credential/config files, the repo's .git
+      config + hooks, and any already-checked-out source) and reports anything
+      overwritten, deleted, or chmod'd at job end. "auto" (use if available) or
+      "off". Skips silently if the agent binary can't be obtained.
+    required: false
+    default: 'auto'
+  fim-extra-paths:
+    description: >-
+      Additional files to watch for tampering, one per line or space/comma
+      separated. Useful for project-specific secrets or scripts.
+    required: false
+    default: ''
 
 runs:
   using: 'node24'

@@ -110,8 +110,9 @@ including GitHub-hosted runners — by monitoring (and optionally blocking)
 outbound network traffic, then printing every outbound connection as a markdown
 table in the job summary. It's an open, dependency-free alternative to
 proprietary runner-hardening agents, with **socket-layer eBPF capture** (process
-attribution, bypass-proof), **dynamic allow-by-domain** blocking, and
-**self-contained learn→enforce** (no external service).
+attribution, bypass-proof), **dynamic allow-by-domain** blocking,
+**self-contained learn→enforce** (no external service), and **file-integrity /
+tamper detection**.
 
 ```yaml
 steps:
@@ -154,6 +155,8 @@ agent is active):
 | `ebpf` | `auto` | `auto` uses the Rust/aya eBPF agent for socket-layer capture + process attribution (local binary, else best-effort download of the latest release asset); `off` disables it. Falls back to the `ss`/`/proc` sampler. |
 | `policy-file` | `.legion/egress-allowed.txt` | Committed allowlist (learn → enforce). |
 | `learn` | `false` | In audit mode, write the observed destinations to `policy-file`. |
+| `file-integrity` | `auto` | Detect file tampering during the job (Rust `legionr-fim` agent): credential/config files, `.git` config + hooks, and checked-out source. `auto` or `off`. |
+| `fim-extra-paths` | `` | Extra files to watch for tampering (one per line / comma-separated). |
 | `disable-sudo` | `false` | Revoke the runner user's sudo after setup. |
 | `disable-telemetry` | `false` | Suppress lifecycle events (stay fully local). |
 | `legion-link` | `` | Stream egress events to a Legion desktop endpoint. |
@@ -205,6 +208,36 @@ job summary (parsed from the firewall log) rather than dropped silently.
 > **Optional, for teams who want a reviewable allowlist in git:** set
 > `learn: true` in an audit run to also write `.legion/egress-allowed.txt`, which
 > `block` reads if present. Purely optional — the cache path above needs none of it.
+
+### File-integrity monitoring (tamper detection)
+
+Egress control stops a compromised step from *calling home* — but a poisoned
+action or dependency can also **tamper with files**: overwrite a checked-out
+build script, plant a `git` hook, or rewrite `~/.npmrc` / `~/.ssh` to harvest
+credentials (the `tj-actions` class of attack). With `file-integrity: auto`
+(the default), the Rust `legionr-fim` agent snapshots the high-value tamper
+targets at job start and diffs them at job end:
+
+- **Sensitive** — credential/config files (`~/.ssh/*`, `~/.npmrc`, `~/.netrc`,
+  `~/.docker/config.json`, `~/.aws/*`, `~/.gitconfig`, …), plus the repo's
+  `.git/config` and `.git/hooks`. Any change here is high-signal.
+- **Source** — files already present in the workspace at job start. A change
+  means a checked-out file was overwritten or deleted mid-run (active when the
+  action runs after checkout, or on a re-run).
+
+Anything that changed is surfaced in the job summary:
+
+> ### 🔏 File integrity — tampering detected
+> | | Scope | File | Change |
+> |---|---|---|---|
+> | 🔴 | sensitive | `/home/runner/.npmrc` | modified |
+> | 🟠 | source | `/home/runner/work/repo/build.sh` | modified |
+
+Only file **hashes** (sha256) are ever stored or compared — never contents — so
+snapshotting a private key or `.npmrc` records no secret material. The engine is
+a compiled Rust binary ([`crates/legionr-fim`](crates/legionr-fim)) attached to
+each release and fetched on demand; it degrades to a silent skip if the binary
+can't be obtained.
 
 ## Hardening at a glance
 

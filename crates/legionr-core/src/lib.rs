@@ -15,9 +15,11 @@
 //! - [`harden`]  — generators for the hardened systemd unit, sysctl, nftables.
 //! - [`container`] — rootless container sandbox backend (Podman/Docker).
 //! - [`link`]    — heartbeats lifecycle events to the Legion desktop monitor.
+//! - [`fim`]     — file-integrity monitoring: snapshot + diff of tamper targets.
 
 pub mod config;
 pub mod container;
+pub mod fim;
 pub mod github;
 pub mod harden;
 pub mod link;

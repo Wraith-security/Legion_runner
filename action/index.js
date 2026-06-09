@@ -18,6 +18,7 @@ const os = require("node:os");
 const path = require("node:path");
 const cache = require("./cache.js");
 const ebpf = require("./ebpf.js");
+const fim = require("./fim.js");
 
 // GitHub + Actions endpoints a job almost always needs. Kept in sync with
 // legionr-core's harden::GITHUB_EGRESS.
@@ -35,6 +36,7 @@ const GITHUB_EGRESS = [
 ];
 
 const STATE_FILE = path.join(os.tmpdir(), "legion-harden-state.json");
+const FIM_SNAP_FILE = path.join(os.tmpdir(), "legion-fim-before.json");
 
 // ── Actions helpers (workflow-command protocol, no toolkit) ─────────────────
 function input(name, def = "") {
@@ -596,6 +598,33 @@ async function main() {
     ebpfCap = startEbpf(path.join(os.tmpdir(), "legion-connect.log"), bin);
   }
 
+  // File-integrity baseline: the Rust legionr-fim agent snapshots the high-value
+  // tamper targets (credential/config files, .git hooks/config, and any already
+  // checked-out source) so post() can flag anything overwritten, deleted, or
+  // chmod'd during the job. Skips silently if the agent binary isn't available.
+  let fimState = null;
+  if (input("file-integrity", "auto").toLowerCase() !== "off") {
+    const bin = await fim.ensureBinary();
+    if (!bin) {
+      info("   file-integrity: legionr-fim agent unavailable; skipping");
+    } else {
+      try {
+        const extraPaths = parseEndpoints(input("fim-extra-paths", ""))
+          .map((e) => e.host)
+          .filter(Boolean);
+        const t0 = Date.now();
+        const c = fim.runSnapshot(bin, FIM_SNAP_FILE, workspace, extraPaths);
+        fimState = { bin, snap: FIM_SNAP_FILE };
+        info(
+          `   file-integrity baseline: ${c.sensitive || 0} sensitive + ` +
+            `${c.source || 0} source file(s) (${Date.now() - t0}ms) [legionr-fim]`,
+        );
+      } catch (e) {
+        warn(`file-integrity baseline failed (${e.message}); continuing`);
+      }
+    }
+  }
+
   let enforced = false;
   if (block) {
     try {
@@ -630,6 +659,7 @@ async function main() {
       allowIps: [...v4, ...v6],
       dns: dnsCap,
       ebpf: ebpfCap,
+      fim: fimState,
       policyFile,
       policyFileRel,
       learn,
@@ -810,6 +840,20 @@ async function post() {
     } else {
       md += "\n_No egress was denied (everything the job reached was allowlisted), ";
       md += "or kernel-log access was unavailable to enumerate drops._\n";
+    }
+  }
+
+  // File integrity: diff the tamper targets against the job-start baseline (via
+  // the Rust legionr-fim agent) and surface anything that changed mid-run.
+  if (st.fim && st.fim.bin && st.fim.snap) {
+    try {
+      const changes = fim.runDiff(st.fim.bin, st.fim.snap);
+      md += fim.renderChanges(changes);
+      if (changes.length) {
+        info(`Legion Harden Runner: ${changes.length} file-integrity change(s) detected.`);
+      }
+    } catch (e) {
+      md += `\n_File-integrity diff failed: ${e.message}_\n`;
     }
   }
 

@@ -1,0 +1,15 @@
+[package]
+name        = "legionr-fim"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+description           = "Legion Runner file-integrity agent: snapshot + diff of tamper targets for the Harden Runner action"
+
+[[bin]]
+name = "legionr-fim"
+path = "src/main.rs"
+
+[dependencies]
+legionr-core = { path = "../legionr-core" }
+serde_json   = { workspace = true }
