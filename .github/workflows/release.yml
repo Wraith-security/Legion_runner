@@ -32,10 +32,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Harden runner (Legion, audit)
+      - name: Harden runner (Legion, block)
         uses: OpenSource-For-Freedom/legion_runner@v1
         with:
-          egress-policy: audit
+          egress-policy: block
+          # Default-deny egress. allow-github covers GitHub's endpoints; these
+          # are the toolchain + registry this verify job reaches. No actions/cache
+          # step here, so no Azure-blob endpoint needed (unlike ci.yml's rust job).
+          allowed-endpoints: |
+            static.rust-lang.org
+            index.crates.io
+            static.crates.io
+            crates.io
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
