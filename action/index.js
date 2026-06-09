@@ -401,8 +401,13 @@ async function main() {
   fs.writeFileSync(logFile, "");
   const pid = startMonitor(logFile, interval);
 
-  // Block first so the firewall chain exists before DNS capture starts adding
-  // dynamic allow rules into it.
+  // Optional DNS capture: route the resolver through a local logging forwarder
+  // so connections map to the exact domains the job resolved (beats reverse DNS).
+  let dnsCap = { active: false, log: "", backup: "" };
+  if (boolInput("dns-capture", true)) {
+    dnsCap = await startDnsCapture();
+  }
+
   let enforced = false;
   if (block) {
     try {
