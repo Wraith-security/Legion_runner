@@ -1,0 +1,34 @@
+# syntax=docker/dockerfile:1
+#
+# Legion Harden Runner — lean action runtime image (Chainguard Wolfi).
+#
+# This image carries ONLY what the Harden Runner action needs: Node (to run the
+# action), iproute2/iptables (egress monitoring + block mode), and the usual job
+# tools. No Rust build, so the self-test container builds fast and reliably.
+# The full runner image (with the legionr binary) lives in ./Dockerfile.
+#
+# Wolfi is glibc-based, so GitHub's injected node runs inside it when this image
+# is used as a job `container:` — the reason we prefer it over Alpine/musl.
+
+FROM cgr.dev/chainguard/wolfi-base
+
+LABEL org.opencontainers.image.title="Legion Harden Runner (action)" \
+      org.opencontainers.image.source="https://github.com/OpenSource-For-Freedom/legion_runner" \
+      org.opencontainers.image.licenses="MIT"
+
+# tar/gzip/sort are provided by busybox in wolfi-base.
+RUN apk add --no-cache \
+        nodejs \
+        bash \
+        iproute2 \
+        iptables \
+        git \
+        curl \
+        ca-certificates-bundle
+
+COPY action /opt/legion-runner/action
+
+# Run as root: GitHub Actions container jobs set up the workspace as root, and a
+# non-root container user causes permission errors on the mounted work volume.
+WORKDIR /opt/legion-runner
+CMD ["node", "/opt/legion-runner/action/index.js"]

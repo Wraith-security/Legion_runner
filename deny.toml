@@ -1,0 +1,22 @@
+# cargo-deny configuration — supply-chain controls for Legion Runner.
+# Run locally with: cargo deny check advisories bans sources
+
+[advisories]
+version = 2
+# Fail on crates pulled from a source that has yanked the exact version.
+yanked = "deny"
+ignore = []
+
+[bans]
+# Surface (do not hard-fail on) duplicate transitive versions and wildcard
+# version requirements — useful signal without blocking routine updates.
+multiple-versions = "warn"
+wildcards = "warn"
+deny = []
+
+[sources]
+# Only allow dependencies from crates.io; reject unknown registries / git deps
+# to prevent dependency-confusion and unvetted source pulls (OWASP A08).
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = []

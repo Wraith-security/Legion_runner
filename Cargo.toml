@@ -1,0 +1,35 @@
+[workspace]
+members = [
+    "crates/legionr-core",
+    "crates/legionr-cli",
+]
+resolver = "2"
+
+[workspace.package]
+version      = "0.1.0"
+edition      = "2021"
+authors      = ["Legion Contributors"]
+license      = "MIT"
+repository   = "https://github.com/tbgor/legion_runner"
+description  = "Legion Runner – hardened, ephemeral, single-use GitHub Actions runner for Linux"
+
+[workspace.dependencies]
+# async runtime + process supervision
+tokio              = { version = "1",    features = ["full"] }
+# HTTP – rustls so no system OpenSSL needed (matches Legion)
+reqwest            = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# serialization
+serde              = { version = "1",    features = ["derive"] }
+serde_json         = "1"
+# datetime
+chrono             = { version = "0.4",  features = ["serde"] }
+# error handling
+anyhow             = "1"
+thiserror          = "1"
+# logging
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+# CLI
+clap               = { version = "4",    features = ["derive", "color", "wrap_help", "env"] }
+# test helpers
+tempfile           = "3"

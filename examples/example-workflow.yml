@@ -1,0 +1,32 @@
+# Example workflow that targets a Legion Runner.
+#
+# Drop this in a consuming repo as .github/workflows/ci.yml (or merge the
+# `runs-on:` line into an existing workflow). The labels match the Legion Runner
+# defaults from `legionr provision` (self-hosted, linux, legion, ephemeral).
+#
+# Because every Legion Runner is single-use, you get a clean machine for each
+# job automatically — no `actions/checkout` clean-up dance, no cache poisoning.
+
+name: CI (Legion Runner)
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    # A fresh, hardened, single-use runner serves exactly this job, then dies.
+    runs-on: [self-hosted, linux, legion, ephemeral]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show the (ephemeral) environment
+        run: |
+          echo "Runner: $RUNNER_NAME"
+          echo "This machine is destroyed after the job completes."
+          uname -a
+
+      - name: Build
+        run: |
+          # your real build steps here
+          echo "building..."

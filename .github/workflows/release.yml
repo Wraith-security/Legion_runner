@@ -1,0 +1,159 @@
+name: Release on main
+
+# Every push to main: verify the workspace, and only on success auto-bump the
+# patch version, tag it, cut a GitHub Release, and advance the moving major tag
+# (v1) so `uses: OpenSource-For-Freedom/legion_runner@v1` keeps resolving.
+#
+# Versioning is SemVer (MAJOR.MINOR.PATCH). First release defaults to 1.0.0 if
+# no tag exists yet; thereafter each push to main → patch + 1 (1.0.1, 1.0.2, …).
+# Use the manual trigger to cut a minor/major bump instead.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version part to bump'
+        type: choice
+        default: patch
+        options: [patch, minor, major]
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  # ── Gate: the release only happens if this passes ──────────────────────────
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --workspace
+      - name: Check action JS
+        run: |
+          node --check action/index.js
+          node --check action/monitor.js
+
+  release:
+    name: Tag & release
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create tags + releases
+    outputs:
+      tag: ${{ steps.ver.outputs.tag }}
+      major: ${{ steps.ver.outputs.major }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Compute next version
+        id: ver
+        run: |
+          set -euo pipefail
+          # Highest existing vMAJOR.MINOR.PATCH tag, or empty.
+          latest="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' \
+                    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)"
+          bump="${{ github.event.inputs.bump || 'patch' }}"
+
+          if [ -z "$latest" ]; then
+            next="1.0.0"
+          else
+            v="${latest#v}"; IFS=. read -r MA MI PA <<< "$v"
+            case "$bump" in
+              major) MA=$((MA+1)); MI=0; PA=0 ;;
+              minor) MI=$((MI+1)); PA=0 ;;
+              *)     PA=$((PA+1)) ;;
+            esac
+            next="${MA}.${MI}.${PA}"
+          fi
+
+          echo "Previous: ${latest:-<none>}  →  Next: v${next}"
+          echo "tag=v${next}" >> "$GITHUB_OUTPUT"
+          echo "major=v${next%%.*}" >> "$GITHUB_OUTPUT"
+
+      - name: Build release notes from CHANGELOG
+        run: |
+          set -euo pipefail
+          # Body = the [Unreleased] section of CHANGELOG.md, if present.
+          awk '/^## \[Unreleased\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md \
+            | sed '/./,$!d' > /tmp/notes.md || true
+          if [ -s /tmp/notes.md ]; then
+            echo "Using CHANGELOG [Unreleased] section for release notes."
+          else
+            echo "No CHANGELOG notes found; will fall back to generated notes."
+          fi
+
+      - name: Create release
+        run: |
+          set -euo pipefail
+          tag="${{ steps.ver.outputs.tag }}"
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "Tag $tag already exists; skipping."
+            exit 0
+          fi
+          if [ -s /tmp/notes.md ]; then
+            gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" \
+              --notes-file /tmp/notes.md --latest
+          else
+            gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" \
+              --generate-notes --latest
+          fi
+
+      - name: Advance moving major tag
+        run: |
+          set -euo pipefail
+          major="${{ steps.ver.outputs.major }}"
+          git tag -f "$major" "$GITHUB_SHA"
+          git push origin -f "refs/tags/${major}"
+          echo "Moved ${major} → ${GITHUB_SHA}"
+
+  # ── Publish the full production image at the new version ───────────────────
+  image:
+    name: Publish production image
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute image tags
+        id: tags
+        run: |
+          repo="ghcr.io/${GITHUB_REPOSITORY,,}"
+          tag="${{ needs.release.outputs.tag }}"
+          major="${{ needs.release.outputs.major }}"
+          echo "tags=${repo}:${tag},${repo}:${major},${repo}:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

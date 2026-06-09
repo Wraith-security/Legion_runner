@@ -1,0 +1,47 @@
+name: 'Legion Harden Runner'
+description: >-
+  Hardened egress filtering and runtime network monitoring for GitHub Actions
+  jobs. Open-source, dependency-free, ephemeral-friendly — a transparent
+  alternative to proprietary runner-hardening agents.
+author: 'Legion'
+branding:
+  icon: 'shield'
+  color: 'purple'
+
+inputs:
+  egress-policy:
+    description: '"audit" (monitor only, never breaks builds) or "block" (default-deny egress allowlist).'
+    required: false
+    default: 'audit'
+  allowed-endpoints:
+    description: >-
+      Endpoints to permit in block mode, one per line or space/comma separated,
+      as "host" or "host:port" (e.g. "api.nuget.org:443"). GitHub/Actions
+      endpoints are always allowed when allow-github is true.
+    required: false
+    default: ''
+  allow-github:
+    description: 'Always allow GitHub + Actions endpoints (so the job can still talk to GitHub).'
+    required: false
+    default: 'true'
+  disable-sudo:
+    description: 'Revoke the runner user''s sudo after setup, to stop later privilege use.'
+    required: false
+    default: 'false'
+  disable-telemetry:
+    description: 'Do not emit any lifecycle events (Legion link / step summary stays local).'
+    required: false
+    default: 'false'
+  legion-link:
+    description: 'Optional Legion desktop endpoint (e.g. http://host:3000) to stream job egress events to.'
+    required: false
+    default: ''
+  sample-interval:
+    description: 'Seconds between egress samples for the monitor.'
+    required: false
+    default: '3'
+
+runs:
+  using: 'node20'
+  main: 'action/index.js'
+  post: 'action/index.js'

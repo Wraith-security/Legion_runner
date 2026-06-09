@@ -1,0 +1,94 @@
+name: Harden Runner self-test
+
+# Builds the Chainguard Wolfi image from our Dockerfile, then runs the Legion
+# Harden Runner action INSIDE that container (not ubuntu-latest) to prove the
+# action works and prints the outbound-connection table.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main, Primary]
+  workflow_dispatch:
+
+jobs:
+  build-image:
+    name: Build Wolfi image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute lowercase image ref
+        id: meta
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}-action:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push (lean action image)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.action
+          push: true
+          tags: ${{ steps.meta.outputs.image }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  harden-selftest:
+    name: Run action inside Wolfi container
+    needs: build-image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ${{ needs.build-image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      # NET_ADMIN lets block-mode iptables work; audit mode below needs nothing.
+      options: --cap-add=NET_ADMIN
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Confirm we are on Wolfi (not Ubuntu)
+        run: |
+          echo "Container OS:"; cat /etc/os-release | grep -E '^(ID|NAME)=' || true
+          echo "node: $(node --version)"
+          echo "ss:   $(command -v ss || echo 'n/a')  iptables: $(command -v iptables || echo 'n/a')"
+          echo "legionr: $(legionr --version)"
+
+      - name: Harden the runner (audit mode)
+        uses: ./
+        with:
+          egress-policy: audit
+          sample-interval: '1'
+          allowed-endpoints: |
+            api.github.com:443
+            objects.githubusercontent.com:443
+
+      - name: Generate some outbound traffic
+        run: |
+          set +e
+          for url in https://api.github.com https://github.com https://example.com; do
+            echo "GET $url"; curl -sS -o /dev/null --max-time 15 "$url" && echo "  ok"
+          done
+          sleep 3   # let the monitor capture the connections
+
+      - name: Show captured egress log (also rendered as a table in the job summary)
+        run: |
+          echo "Observed peers this run:"
+          sort -u /tmp/legion-egress.log 2>/dev/null || echo "(no log — monitor may have used a different temp dir)"
