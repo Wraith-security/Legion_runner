@@ -20,7 +20,7 @@ jobs:
       - name: Harden runner (Legion)
         uses: ./
         with:
-          egress-policy: ${{ vars.LEGION_EGRESS || 'audit' }}
+          egress-policy: audit
           policy-file: .legion/egress-allowed.txt
 
       - name: Install Rust
@@ -60,7 +60,7 @@ jobs:
       - name: Harden runner (Legion)
         uses: ./
         with:
-          egress-policy: ${{ vars.LEGION_EGRESS || 'audit' }}
+          egress-policy: audit
           policy-file: .legion/egress-allowed.txt
       - name: ShellCheck
         run: |
@@ -76,7 +76,7 @@ jobs:
       - name: Harden runner (Legion)
         uses: ./
         with:
-          egress-policy: ${{ vars.LEGION_EGRESS || 'audit' }}
+          egress-policy: audit
           policy-file: .legion/egress-allowed.txt
       - uses: dtolnay/rust-toolchain@stable
       - name: Install cargo-audit
@@ -93,7 +93,7 @@ jobs:
       - name: Harden runner (Legion)
         uses: ./
         with:
-          egress-policy: ${{ vars.LEGION_EGRESS || 'audit' }}
+          egress-policy: audit
           policy-file: .legion/egress-allowed.txt
       - name: cargo-deny (advisories, bans, sources)
         uses: EmbarkStudios/cargo-deny-action@v2
