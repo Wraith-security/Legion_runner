@@ -5,8 +5,10 @@ name: Release on main
 # (v1) so `uses: OpenSource-For-Freedom/legion_runner@v1` keeps resolving.
 #
 # Versioning is SemVer (MAJOR.MINOR.PATCH). First release defaults to 1.0.0 if
-# no tag exists yet; thereafter each push to main → patch + 1 (1.0.1, 1.0.2, …).
-# Use the manual trigger to cut a minor/major bump instead.
+# no tag exists yet. The bump is chosen by: workflow_dispatch input, else a
+# commit-message marker ([major]/[minor]) on the head commit, else patch. So a
+# feature drop is released as a minor by merging with "[minor]" in the commit;
+# routine pushes stay patch.
 
 on:
   push:
@@ -69,7 +71,20 @@ jobs:
           # Highest existing vMAJOR.MINOR.PATCH tag, or empty.
           latest="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' \
                     | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)"
-          bump="${{ github.event.inputs.bump || 'patch' }}"
+
+          # Bump precedence: workflow_dispatch input → commit-message marker
+          # ([major]/[minor]) → patch. So a feature drop is cut by putting
+          # "[minor]" in the merge commit; routine pushes stay patch.
+          bump="${{ github.event.inputs.bump || '' }}"
+          if [ -z "$bump" ]; then
+            msg="$(git log -1 --format=%B 2>/dev/null || true)"
+            case "$msg" in
+              *'[major]'*) bump=major ;;
+              *'[minor]'*) bump=minor ;;
+              *)           bump=patch ;;
+            esac
+          fi
+          echo "Bump: $bump"
 
           if [ -z "$latest" ]; then
             next="1.0.0"
