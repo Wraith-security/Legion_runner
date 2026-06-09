@@ -270,10 +270,11 @@ async function resolvesVia(server) {
 
 /// Start the local DNS forwarder and route the system resolver through it.
 /// Best-effort: on any failure we restore and fall back to reverse DNS.
-async function startDnsCapture() {
+async function startDnsCapture(opts = {}) {
   const out = {
     active: false,
     pid: null,
+    enforce: !!opts.enforce,
     log: path.join(os.tmpdir(), "legion-dns.log"),
     backup: path.join(os.tmpdir(), "resolv.conf.legion.bak"),
   };
@@ -281,8 +282,17 @@ async function startDnsCapture() {
     fs.writeFileSync(out.log, "");
     const upstream = currentUpstream();
     const cap = path.join(__dirname, "dnscap.js");
+    // argv: <log> <upstream> <port> <enforce 0|1> <allow-domains csv>
+    const argv = [
+      cap,
+      out.log,
+      upstream,
+      "53",
+      opts.enforce ? "1" : "0",
+      (opts.domains || []).join(","),
+    ];
     // Bind :53 requires privilege → root directly, else sudo. Detached.
-    const child = spawnPrivileged(process.execPath, [cap, out.log, upstream, "53"], {
+    const child = spawnPrivileged(process.execPath, argv, {
       detached: true,
       stdio: "ignore",
     });
@@ -298,7 +308,10 @@ async function startDnsCapture() {
     fs.writeFileSync(tmp, "nameserver 127.0.0.1\noptions timeout:2 attempts:2\n");
     sudo(["cp", tmp, "/etc/resolv.conf"]);
     out.active = true;
-    info(`   DNS capture active (resolver → local logger → ${upstream})`);
+    info(
+      `   DNS capture active (resolver → local logger → ${upstream})` +
+        (out.enforce ? " — enforcing allow-by-domain" : ""),
+    );
   } catch (e) {
     warn(`DNS capture unavailable (${e.message}); falling back to reverse DNS`);
     killDnsForwarder(out.pid);
@@ -388,23 +401,25 @@ async function main() {
   fs.writeFileSync(logFile, "");
   const pid = startMonitor(logFile, interval);
 
-  // Optional DNS capture: route the resolver through a local logging forwarder
-  // so connections map to the exact domains the job resolved (beats reverse DNS).
-  let dnsCap = { active: false, log: "", backup: "" };
-  if (boolInput("dns-capture", true)) {
-    dnsCap = await startDnsCapture();
-  }
-
   let enforced = false;
   if (block) {
     try {
       applyEgressBlock(v4, v6);
       enforced = true;
-      info(`   enforced default-deny egress for ${v4.length + v6.length} allowlisted IPs`);
+      info(`   enforced default-deny egress (seeded ${v4.length + v6.length} allowlisted IPs)`);
     } catch (e) {
       setFailed(`block mode requested but firewall setup failed: ${e.message}`);
       return;
     }
+  }
+
+  // DNS capture: routes the resolver through a local logger so connections map
+  // to exact domains. In block mode it ALSO enforces by domain — opening the
+  // firewall for an allowlisted domain's IPs as they resolve (survives CDN/IP
+  // rotation), so the static seed above is just the head start.
+  let dnsCap = { active: false, log: "", backup: "" };
+  if (boolInput("dns-capture", true)) {
+    dnsCap = await startDnsCapture({ enforce: block && enforced, domains: hosts });
   }
 
   // Persist everything post() needs.
@@ -548,27 +563,24 @@ async function post() {
         : "had no PTR record — enable `dns-capture` for exact domains";
       md += ` _(${unresolved} ${tip}.)_`;
     }
+    if (st.policy === "block") {
+      md += " _Denied attempts are dropped by the firewall and don't appear here._";
+    }
     md += "\n";
   }
 
-  // Learn → enforce: in audit mode, surface (and optionally persist) a baseline
-  // allowlist. Switching the workflow to `egress-policy: block` then denies
-  // anything not in this committed file.
-  if (st.policy !== "block" && st.policyFile && rows.length) {
+  // Learn → enforce: only when actively learning do we surface/persist the
+  // baseline allowlist (otherwise it just re-lists the table above).
+  if (st.policy !== "block" && st.policyFile && st.learn && rows.length) {
     const learned = baselineFrom(rows);
-    md += `\n### Learned egress baseline (${learned.length})\n`;
-    md += "Commit this and set `egress-policy: block` to deny everything else:\n\n";
-    md += "```\n" + learned.join("\n") + "\n```\n";
-    if (st.learn) {
-      const merged = [...new Set([...readPolicyFile(st.policyFile), ...learned])].sort();
-      try {
-        writePolicyFile(st.policyFile, merged);
-        md += `\n_Baseline written to \`${st.policyFileRel}\` (${merged.length} entries) — commit it to enforce._\n`;
-      } catch (e) {
-        md += `\n_Could not write \`${st.policyFileRel}\`: ${e.message}_\n`;
-      }
-    } else {
-      md += `\n_Set \`learn: true\` to write this to \`${st.policyFileRel}\` automatically._\n`;
+    const merged = [...new Set([...readPolicyFile(st.policyFile), ...learned])].sort();
+    try {
+      writePolicyFile(st.policyFile, merged);
+      md += `\n### Learned egress baseline (${merged.length})\n`;
+      md += `Written to \`${st.policyFileRel}\` — commit it, then set \`egress-policy: block\` to enforce:\n\n`;
+      md += "```\n" + merged.join("\n") + "\n```\n";
+    } catch (e) {
+      md += `\n_Could not write \`${st.policyFileRel}\`: ${e.message}_\n`;
     }
   }
 
@@ -598,7 +610,10 @@ function isLocal(ip) {
 
 function decisionFor(st, allow, ip) {
   if (st.policy !== "block") return "👁 Audited";
-  return allow.has(ip) ? "✅ Allowed" : "⛔ Blocked";
+  // Under block, an observed (established) connection got through the firewall:
+  // either via the static seed or via dynamic allow-by-domain. Denied attempts
+  // are dropped and never establish, so they don't appear here.
+  return allow.has(ip) ? "✅ Allowed" : "✅ Allowed (dynamic)";
 }
 
 // Split "host:port" / "[v6]:port" / bare ip into { ip, port }.

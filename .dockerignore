@@ -1,7 +1,0 @@
-target/
-.git/
-.github/
-*.log
-*.md
-_work/
-examples/

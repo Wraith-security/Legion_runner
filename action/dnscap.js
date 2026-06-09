@@ -12,14 +12,42 @@
 
 const dgram = require("node:dgram");
 const fs = require("node:fs");
+const { execFileSync } = require("node:child_process");
 
 const logFile = process.argv[2];
 const upstream = process.argv[3] || "127.0.0.53";
 const port = parseInt(process.argv[4], 10) || 53;
+// Enforcement: when on, IPs answered for an allowlisted domain are added to the
+// firewall (LEGION_EGRESS chain) before the reply is relayed — block-by-domain.
+const ENFORCE = process.argv[5] === "1";
+const ALLOW = (process.argv[6] || "")
+  .toLowerCase()
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 const server = dgram.createSocket("udp4");
 const client = dgram.createSocket("udp4");
 const inflight = new Map(); // query id -> { addr, port }
+const allowed = new Set(); // IPs already inserted into the firewall
+
+// A name is allowed if it equals, or is a subdomain of, an allowlist entry.
+function domainAllowed(name, allow = ALLOW) {
+  name = (name || "").toLowerCase().replace(/\.$/, "");
+  return allow.some((d) => name === d || name.endsWith("." + d));
+}
+
+// Insert an ACCEPT for `ip` ahead of the chain's terminal DROP (dedup in-mem).
+function allowIp(ip) {
+  if (!ip || allowed.has(ip)) return;
+  const bin = ip.includes(":") ? "ip6tables" : "iptables";
+  try {
+    execFileSync(bin, ["-I", "LEGION_EGRESS", "-d", ip, "-j", "ACCEPT"], { stdio: "ignore" });
+    allowed.add(ip);
+  } catch {
+    /* firewall may be unavailable; static allowlist still applies */
+  }
+}
 
 // Read a (possibly compressed) DNS name; returns the dotted string.
 function readName(buf, pos) {
@@ -89,6 +117,11 @@ if (require.main === module) {
       const r = extract(msg);
       if (r && r.qname && r.ips.length) {
         fs.appendFileSync(logFile, r.ips.map((ip) => `${ip}\t${r.qname}`).join("\n") + "\n");
+        // Enforce-by-domain: open the firewall for this domain's IPs *before*
+        // the app receives the answer, so the connection that follows is allowed.
+        if (ENFORCE && domainAllowed(r.qname)) {
+          for (const ip of r.ips) allowIp(ip);
+        }
       }
     } catch {
       /* logging is best-effort; never disrupt resolution */
@@ -106,4 +139,4 @@ if (require.main === module) {
   server.bind(port, "127.0.0.1");
 }
 
-module.exports = { extract, readName }; // for tests
+module.exports = { extract, readName, domainAllowed }; // for tests

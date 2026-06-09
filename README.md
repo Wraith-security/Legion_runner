@@ -175,6 +175,13 @@ and re-learn.
     egress-policy: block   # deny anything not in .legion/egress-allowed.txt
 ```
 
+In block mode with `dns-capture` on (the default), enforcement is **by domain**:
+as an allowlisted domain resolves, the firewall is opened for *its current IPs*
+before the connection is made. So CDN/cloud endpoints that rotate IPs
+(`*.crates.io`, apt mirrors) keep working without pinning addresses, while
+everything else is dropped. Allowlist entries match subdomains too
+(`github.com` allows `api.github.com`).
+
 Drive the toggle without editing the workflow by reading a repo variable, so
 flipping `LEGION_EGRESS` to `block` enforces fleet-wide:
 
@@ -182,29 +189,6 @@ flipping `LEGION_EGRESS` to `block` enforces fleet-wide:
   with:
     egress-policy: ${{ vars.LEGION_EGRESS || 'audit' }}
 ```
-
-### Run it in our Wolfi container (not `ubuntu-latest`)
-
-The repo ships a Chainguard **Wolfi** [`Dockerfile`](Dockerfile) carrying the
-`legionr` binary, Node, and the network tooling. Because Wolfi is glibc-based,
-GitHub's injected node runs inside it (unlike Alpine/musl), so you can run whole
-jobs in our hardened image:
-
-```yaml
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/opensource-for-freedom/legion_runner:latest
-      options: --cap-add=NET_ADMIN     # only needed for block mode
-    steps:
-      - uses: ./                        # Legion Harden Runner, inside Wolfi
-      - uses: actions/checkout@v4
-      - run: make build
-```
-
-See [`.github/workflows/harden-selftest.yml`](.github/workflows/harden-selftest.yml)
-for the workflow that builds the image and exercises the action inside it.
 
 ## Hardening at a glance
 
