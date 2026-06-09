@@ -1,4 +1,4 @@
-name: 'Legion Harden Runner'
+name: 'Legion Runner'
 description: >-
   Hardened egress filtering and runtime network monitoring for GitHub Actions
   jobs. Open-source, dependency-free, and ephemeral.
