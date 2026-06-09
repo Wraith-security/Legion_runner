@@ -1,0 +1,21 @@
+[package]
+name        = "legionr-cli"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+description           = "Legion Runner – command-line control plane"
+
+[[bin]]
+name = "legionr"
+path = "src/main.rs"
+
+[dependencies]
+legionr-core       = { path = "../legionr-core" }
+tokio              = { workspace = true }
+clap               = { workspace = true }
+serde_json         = { workspace = true }
+anyhow             = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+chrono             = { workspace = true }

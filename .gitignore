@@ -1,0 +1,10 @@
+/target
+*.log
+.env
+# Runner state / secrets must never be committed.
+*.json
+!.github/**/*.json
+_work/
+.runner
+.credentials*
+.DS_Store
