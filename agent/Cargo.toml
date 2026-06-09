@@ -2,7 +2,11 @@
 # toolchain (nightly + bpf-linker) never affects the main `cargo build`.
 [workspace]
 resolver = "2"
-members = ["legionr-bpf", "legionr-bpf-common", "legionr-bpf-ebpf"]
+# The eBPF crate is NOT a member: it is #![no_std]/#![no_main] and must only be
+# built for the BPF target by aya-build (build.rs). Listing it as a member would
+# make host `cargo build`/`test` compile it for the host → duplicate panic_impl.
+members = ["legionr-bpf", "legionr-bpf-common"]
+exclude = ["legionr-bpf-ebpf"]
 
 [workspace.package]
 version = "0.1.0"

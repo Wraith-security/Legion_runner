@@ -1,8 +1,10 @@
+# Standalone package (excluded from the agent workspace) — concrete fields, no
+# workspace inheritance. Built only for the BPF target via aya-build.
 [package]
 name = "legionr-bpf-ebpf"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
 
 [dependencies]
 aya-ebpf = { git = "https://github.com/aya-rs/aya" }
