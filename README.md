@@ -1,4 +1,8 @@
-# Legion Runner
+<div align="center">
+  <img src="assets/logo.jpg" alt="Legion Runner" width="200"/>
+  <h1>Legion Runner</h1>
+  <p><em>Hardened · ephemeral · single-use GitHub Actions runner — runs with joy on Linux</em></p>
+</div>
 
 A **hardened, ephemeral, single-use GitHub Actions runner** for Linux — built to
 run with joy, and to forget everything the moment a job ends.
