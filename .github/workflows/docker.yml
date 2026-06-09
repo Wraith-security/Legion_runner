@@ -1,0 +1,51 @@
+name: Production image
+
+# Builds the full Legion Runner image (multi-stage: compiles the legionr binary
+# on Wolfi, ships it with Node + net tooling). Kept separate from the Harden
+# Runner self-test so the slower Rust build never gates the action's validation.
+
+on:
+  push:
+    branches: [main, Primary, 'feature/**']
+    paths:
+      - 'Dockerfile'
+      - 'Cargo.*'
+      - 'crates/**'
+      - 'action/**'
+      - 'scripts/**'
+      - '.github/workflows/docker.yml'
+  workflow_dispatch:
+
+jobs:
+  image:
+    name: Build full runner image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute lowercase image ref
+        id: meta
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.image }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
