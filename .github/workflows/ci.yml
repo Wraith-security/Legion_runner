@@ -17,6 +17,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Harden runner (Legion, audit)
+        uses: ./
+        with:
+          egress-policy: audit
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -50,6 +55,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - name: Harden runner (Legion, audit)
+        uses: ./
+        with:
+          egress-policy: audit
       - name: ShellCheck
         run: |
           sudo apt-get update && sudo apt-get install -y shellcheck
@@ -60,6 +70,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - name: Harden runner (Legion, audit)
+        uses: ./
+        with:
+          egress-policy: audit
       - uses: dtolnay/rust-toolchain@stable
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
@@ -71,6 +86,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - name: Harden runner (Legion, audit)
+        uses: ./
+        with:
+          egress-policy: audit
       - name: cargo-deny (advisories, bans, sources)
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
