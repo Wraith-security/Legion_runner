@@ -11,9 +11,21 @@ Unreleased section.
 
 ## [Unreleased]
 
+### Changed
+- **Name more destinations**: route glibc `getaddrinfo` (curl/apt/cargo/git)
+  through the DNS-capture forwarder via an `nsswitch.conf` reroute, so hosts
+  resolved by systemd-resolved (which ignores `resolv.conf`) are now captured
+  and named — not just `resolv.conf`/c-ares callers. Health-checked and restored
+  on teardown. (A connection to a hard-coded IP with no PTR still shows the IP —
+  there is no name to resolve.)
+- More accurate "unresolved destination" note in the summary (a name may have
+  been resolved outside the capture path, vs. a genuine raw-IP connection).
+
+## [1.0.14] — Legion Runner platform
+
 First feature release of the full Legion Runner platform: the hardened ephemeral
 runner, the Harden Runner action (audit/block egress with eBPF capture), and the
-release/learn automation.
+release automation.
 
 ### Added
 
