@@ -10,9 +10,9 @@ name = "legionr-bpf"
 path = "src/main.rs"
 
 [dependencies]
-aya = "0.13"
+aya = { git = "https://github.com/aya-rs/aya" }
 anyhow = "1"
 legionr-bpf-common = { path = "../legionr-bpf-common", features = ["user"] }
 
 [build-dependencies]
-aya-build = "0.1"
+aya-build = { git = "https://github.com/aya-rs/aya" }

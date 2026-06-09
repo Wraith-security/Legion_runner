@@ -9,7 +9,8 @@ license.workspace = true
 user = ["aya"]
 
 [dependencies]
-aya = { version = "0.13", optional = true }
+# aya from git to match the aya-build/aya-ebpf API (as in aya-template).
+aya = { git = "https://github.com/aya-rs/aya", optional = true }
 
 [lib]
 path = "src/lib.rs"
