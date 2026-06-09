@@ -557,6 +557,11 @@ async function main() {
 
   const policyFileRel = input("policy-file", ".legion/egress-allowed.txt");
   const learn = boolInput("learn", false);
+  // Whether block mode also allows the destinations previously learned into the
+  // Actions cache (the zero-config learn→enforce baseline). Off = enforce ONLY
+  // the explicit allowlist (inline + file + GitHub), with no cache read/write —
+  // used by the enforce self-test so its deny case is deterministic.
+  const useLearned = boolInput("learned-baseline", true);
   const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
   const policyFile = policyFileRel ? path.resolve(workspace, policyFileRel) : "";
 
@@ -574,7 +579,7 @@ async function main() {
   // cache is what makes audit→block self-contained: no file or workflow needed.
   const userHosts = parseEndpoints(input("allowed-endpoints", "")).map((e) => e.host);
   const fileHosts = policyFile ? readPolicyFile(policyFile) : [];
-  const cachedHosts = await cacheRestoreDomains();
+  const cachedHosts = useLearned ? await cacheRestoreDomains() : [];
   const hosts = [
     ...new Set([...(allowGithub ? GITHUB_EGRESS : []), ...userHosts, ...fileHosts, ...cachedHosts]),
   ];
@@ -663,6 +668,7 @@ async function main() {
       policyFile,
       policyFileRel,
       learn,
+      useLearned,
       startedAt: new Date().toISOString(),
     }),
   );
@@ -869,7 +875,9 @@ async function post() {
   ]
     .filter(Boolean)
     .sort();
-  if (observed.length) {
+  // Skip when learned-baseline is off (e.g. the enforce self-test) so the run
+  // neither reads nor writes the shared cache — keeping it fully hermetic.
+  if (observed.length && st.useLearned !== false) {
     const prev = await cacheRestoreDomains();
     const merged = [...new Set([...prev, ...observed])].sort();
     await cacheSaveDomains(merged);
