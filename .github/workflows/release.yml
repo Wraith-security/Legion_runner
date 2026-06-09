@@ -35,7 +35,7 @@ jobs:
       - name: Harden runner (Legion, audit)
         uses: OpenSource-For-Freedom/legion_runner@v1
         with:
-          egress-policy: block
+          egress-policy: audit
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
