@@ -619,7 +619,16 @@ async function post() {
 
   // Persist the learned baseline to the Actions cache so a later block run can
   // enforce it with no committed file or extra workflow. Best-effort.
-  const observed = baselineFrom(rows);
+  //
+  // The baseline is every domain the job *resolved* (the DNS-capture log) plus
+  // any raw-IP destinations — NOT just sampled sockets. Short-lived connections
+  // can slip between samples, but their DNS lookup is always recorded, so this
+  // is the reliable signal of what the job legitimately needs.
+  const observed = [
+    ...new Set([...baselineFrom(rows), ...Object.values(dnsMap)]),
+  ]
+    .filter(Boolean)
+    .sort();
   if (observed.length) {
     const prev = await cacheRestoreDomains();
     const merged = [...new Set([...prev, ...observed])].sort();
