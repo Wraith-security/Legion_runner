@@ -251,22 +251,57 @@ async function post() {
     /* already gone */
   }
 
-  // Tally observed peers.
+  // Tally observed peers as ip|port.
   const counts = new Map();
   try {
     for (const line of fs.readFileSync(st.logFile, "utf8").split("\n")) {
       const peer = line.trim();
-      if (!peer || !peer.includes(":")) continue;
-      const ip = peer.replace(/^\[/, "").replace(/\]:\d+$/, ":").split(":").slice(0, -1).join(":") || peer;
-      if (isLocal(ip)) continue;
-      counts.set(peer, (counts.get(peer) || 0) + 1);
+      if (!peer.includes(":")) continue;
+      const { ip, port } = splitPeer(peer);
+      if (!ip || isLocal(ip)) continue;
+      const key = `${ip}|${port}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
     }
   } catch {
     /* no log */
   }
 
-  const rows = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  // Resolve hostnames: the forward allowlist map first (authoritative), then
+  // reverse DNS (PTR) for everything else so destinations read as names, not IPs.
+  const uniqueIps = [...new Set([...counts.keys()].map((k) => k.split("|")[0]))];
+  const hostMap = { ...(st.ipToHost || {}) };
+  await Promise.all(
+    uniqueIps
+      .filter((ip) => !hostMap[ip])
+      .map(async (ip) => {
+        const name = await reverseLookup(ip);
+        if (name) hostMap[ip] = name;
+      }),
+  );
+
+  // Group by destination host (or IP when no name is known).
   const allow = new Set(st.allowIps || []);
+  const groups = new Map();
+  for (const [key, n] of counts) {
+    const [ip, port] = key.split("|");
+    const host = hostMap[ip];
+    const dest = host || ip;
+    const g =
+      groups.get(dest) ||
+      {
+        host: host || null,
+        ips: new Set(),
+        ports: new Set(),
+        conns: 0,
+        decision: decisionFor(st, allow, ip),
+      };
+    g.ips.add(ip);
+    if (port) g.ports.add(port);
+    g.conns += n;
+    groups.set(dest, g);
+  }
+  const rows = [...groups.entries()].sort((a, b) => b[1].conns - a[1].conns);
+  const unresolved = rows.filter(([, g]) => !g.host).length;
 
   let md = "## 🛡 Legion Harden Runner — outbound connections\n\n";
   md += `**Egress policy:** \`${st.policy}\`${st.enforced ? " (enforced)" : ""}  ·  `;
@@ -275,15 +310,20 @@ async function post() {
   if (rows.length === 0) {
     md += "_No outbound connections were observed during this run._\n";
   } else {
-    md += "| Destination | Host | Connections | Decision |\n";
-    md += "|---|---|---:|---|\n";
-    for (const [peer, n] of rows) {
-      const ip = peer.replace(/:\d+$/, "").replace(/^\[|\]$/g, "");
-      const host = st.ipToHost[ip] || "—";
-      const decision = decisionFor(st, allow, ip);
-      md += `| \`${peer}\` | ${host} | ${n} | ${decision} |\n`;
+    md += "| Destination | Address | Port(s) | Conns | Decision |\n";
+    md += "|---|---|---|---:|---|\n";
+    for (const [dest, g] of rows) {
+      const ips = [...g.ips];
+      const addr = ips.slice(0, 2).join(", ") + (ips.length > 2 ? `, +${ips.length - 2}` : "");
+      const ports = [...g.ports].sort((a, b) => Number(a) - Number(b)).join(", ") || "—";
+      const name = g.host ? g.host : `\`${dest}\``;
+      md += `| ${name} | \`${addr}\` | ${ports} | ${g.conns} | ${g.decision} |\n`;
     }
-    md += `\n_${rows.length} unique destination(s) observed._\n`;
+    md += `\n_${rows.length} unique destination(s) observed._`;
+    if (unresolved) {
+      md += ` _(${unresolved} had no PTR record — common for CDNs/cloud IPs — so the raw address is shown.)_`;
+    }
+    md += "\n";
   }
   summary(md);
   info(`Legion Harden Runner: reported ${rows.length} outbound destination(s).`);
@@ -312,6 +352,31 @@ function isLocal(ip) {
 function decisionFor(st, allow, ip) {
   if (st.policy !== "block") return "👁 Audited";
   return allow.has(ip) ? "✅ Allowed" : "⛔ Blocked";
+}
+
+// Split "host:port" / "[v6]:port" / bare ip into { ip, port }.
+function splitPeer(peer) {
+  if (peer.startsWith("[")) {
+    const m = peer.match(/^\[([^\]]+)\](?::(\d+))?$/);
+    return m ? { ip: m[1], port: m[2] || "" } : { ip: peer, port: "" };
+  }
+  const idx = peer.lastIndexOf(":");
+  if (idx === -1) return { ip: peer, port: "" };
+  return { ip: peer.slice(0, idx), port: peer.slice(idx + 1) };
+}
+
+// Reverse-DNS (PTR) a single IP, with a hard timeout so a slow resolver can't
+// stall the post step. Returns the first name (trailing dot stripped) or null.
+async function reverseLookup(ip) {
+  try {
+    const names = await Promise.race([
+      dns.reverse(ip),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 2500)),
+    ]);
+    return names && names.length ? names[0].replace(/\.$/, "") : null;
+  } catch {
+    return null;
+  }
 }
 
 // ── entrypoint: detect main vs post via saved state ─────────────────────────
