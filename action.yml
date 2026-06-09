@@ -1,8 +1,7 @@
 name: 'Legion Harden Runner'
 description: >-
   Hardened egress filtering and runtime network monitoring for GitHub Actions
-  jobs. Open-source, dependency-free, ephemeral
-  alternative to proprietary runner-hardening agents.
+  jobs. Open-source, dependency-free, and ephemeral.
 author: 'Legion'
 branding:
   icon: 'shield'
@@ -16,7 +15,7 @@ inputs:
   allowed-endpoints:
     description: >-
       Endpoints to permit in block mode, one per line or space/comma separated,
-      as "host" or "host:port" (e.g. "api.nuget.org:443"). GitHub/Actions
+      as "host" or "host:port" ( "api.nuget.org:443"). GitHub/Actions
       endpoints are always allowed when allow-github is true.
     required: false
     default: ''
