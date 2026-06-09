@@ -30,6 +30,7 @@ LABEL org.opencontainers.image.title="Legion Runner" \
       org.opencontainers.image.source="https://github.com/OpenSource-For-Freedom/legion_runner" \
       org.opencontainers.image.licenses="MIT"
 
+# Note: `tar` is provided by busybox in wolfi-base (no separate package).
 RUN apk add --no-cache \
         nodejs \
         bash \
@@ -37,7 +38,6 @@ RUN apk add --no-cache \
         iptables \
         git \
         curl \
-        tar \
         ca-certificates-bundle \
         libgcc \
     && addgroup -S legionr \
