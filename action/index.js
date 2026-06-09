@@ -62,9 +62,39 @@ function summary(md) {
   if (f) fs.appendFileSync(f, md + "\n");
   else info(md);
 }
+const IS_ROOT = typeof process.getuid === "function" && process.getuid() === 0;
+let _hasSudo = null;
+function hasSudo() {
+  if (_hasSudo === null) {
+    try {
+      execFileSync("sh", ["-c", "command -v sudo"], { stdio: "ignore" });
+      _hasSudo = true;
+    } catch {
+      _hasSudo = false;
+    }
+  }
+  return _hasSudo;
+}
+// Run a privileged command: directly when root (e.g. inside a container),
+// via `sudo -n` when non-root, otherwise throw so callers can degrade.
 function sudo(args) {
-  // Non-interactive privileged command; throws on failure so callers can react.
-  execFileSync("sudo", ["-n", ...args], { stdio: ["ignore", "ignore", "pipe"] });
+  if (IS_ROOT) {
+    return execFileSync(args[0], args.slice(1), { stdio: ["ignore", "ignore", "pipe"] });
+  }
+  if (hasSudo()) {
+    return execFileSync("sudo", ["-n", ...args], { stdio: ["ignore", "ignore", "pipe"] });
+  }
+  throw new Error("no privilege (need root or sudo)");
+}
+// Privileged detached spawn, with an error handler so a missing binary can
+// never crash the action.
+function spawnPrivileged(cmd, argv, opts) {
+  let child;
+  if (IS_ROOT) child = spawn(cmd, argv, opts);
+  else if (hasSudo()) child = spawn("sudo", ["-n", cmd, ...argv], opts);
+  else throw new Error("no privilege (need root or sudo)");
+  child.on("error", () => {});
+  return child;
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -104,6 +134,41 @@ async function resolveAll(hosts) {
   return { ipToHost, v4: [...v4], v6: [...v6] };
 }
 
+// ── Policy baseline (learn → enforce) ───────────────────────────────────────
+
+/// Read a committed allowlist file into a list of hosts (comments/blank/port
+/// stripped). Missing file → empty list.
+function readPolicyFile(p) {
+  try {
+    return fs
+      .readFileSync(p, "utf8")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith("#"))
+      .map((l) => l.split(/\s+/)[0].replace(/:\d+$/, ""))
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/// Write the learned allowlist back to the policy file (sorted, deduped).
+function writePolicyFile(p, hosts) {
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  const body =
+    "# Legion Harden Runner — learned egress allowlist.\n" +
+    "# Commit this file, then set egress-policy: block to deny everything else.\n" +
+    "# Regenerate by running an audit job with learn: true.\n" +
+    hosts.join("\n") +
+    "\n";
+  fs.writeFileSync(p, body);
+}
+
+/// The set of destinations observed this run (domain when known, else IP).
+function baselineFrom(rows) {
+  return [...new Set(rows.map(([dest, g]) => g.host || dest).filter(Boolean))].sort();
+}
+
 // ── Egress monitor ──────────────────────────────────────────────────────────
 function startMonitor(logFile, intervalSec) {
   // Detached Node sampler (action/monitor.js): prefers `ss`, falls back to
@@ -113,6 +178,7 @@ function startMonitor(logFile, intervalSec) {
     detached: true,
     stdio: "ignore",
   });
+  child.on("error", () => {});
   child.unref();
   return child.pid;
 }
@@ -207,6 +273,7 @@ async function resolvesVia(server) {
 async function startDnsCapture() {
   const out = {
     active: false,
+    pid: null,
     log: path.join(os.tmpdir(), "legion-dns.log"),
     backup: path.join(os.tmpdir(), "resolv.conf.legion.bak"),
   };
@@ -214,11 +281,12 @@ async function startDnsCapture() {
     fs.writeFileSync(out.log, "");
     const upstream = currentUpstream();
     const cap = path.join(__dirname, "dnscap.js");
-    // Bind :53 requires root → run under sudo, detached.
-    const child = spawn("sudo", ["-n", process.execPath, cap, out.log, upstream, "53"], {
+    // Bind :53 requires privilege → root directly, else sudo. Detached.
+    const child = spawnPrivileged(process.execPath, [cap, out.log, upstream, "53"], {
       detached: true,
       stdio: "ignore",
     });
+    out.pid = child.pid;
     child.unref();
 
     await sleep(700);
@@ -233,14 +301,27 @@ async function startDnsCapture() {
     info(`   DNS capture active (resolver → local logger → ${upstream})`);
   } catch (e) {
     warn(`DNS capture unavailable (${e.message}); falling back to reverse DNS`);
-    try {
-      sudo(["pkill", "-f", "dnscap.js"]);
-    } catch {
-      /* nothing to kill */
-    }
+    killDnsForwarder(out.pid);
     out.active = false;
   }
   return out;
+}
+
+/// Kill the DNS forwarder by pid (preferred), then by name as a fallback.
+function killDnsForwarder(pid) {
+  if (pid) {
+    try {
+      sudo(["kill", String(pid)]);
+      return;
+    } catch {
+      /* fall through to pkill */
+    }
+  }
+  try {
+    sudo(["pkill", "-f", "dnscap.js"]);
+  } catch {
+    /* nothing to kill / pkill absent */
+  }
 }
 
 /// Parse the DNS-capture log into a normalized ip → domain map.
@@ -263,11 +344,7 @@ function readDnsMap(logFile) {
 /// Stop the DNS forwarder and restore the original resolver config.
 function stopDnsCapture(dns) {
   if (!dns || !dns.active) return;
-  try {
-    sudo(["pkill", "-f", "dnscap.js"]);
-  } catch {
-    /* already gone */
-  }
+  killDnsForwarder(dns.pid);
   try {
     if (dns.backup) sudo(["cp", dns.backup, "/etc/resolv.conf"]);
   } catch {
@@ -284,6 +361,11 @@ async function main() {
   const interval = parseInt(input("sample-interval", "3"), 10) || 3;
   const block = policy === "block";
 
+  const policyFileRel = input("policy-file", ".legion/egress-allowed.txt");
+  const learn = boolInput("learn", false);
+  const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
+  const policyFile = policyFileRel ? path.resolve(workspace, policyFileRel) : "";
+
   info("🛡  Legion Harden Runner");
   info(`   egress-policy: ${policy}`);
 
@@ -293,8 +375,13 @@ async function main() {
     return;
   }
 
+  // Allowlist = GitHub endpoints + explicit inputs + the committed baseline file.
   const userHosts = parseEndpoints(input("allowed-endpoints", "")).map((e) => e.host);
-  const hosts = [...new Set([...(allowGithub ? GITHUB_EGRESS : []), ...userHosts])];
+  const fileHosts = policyFile ? readPolicyFile(policyFile) : [];
+  const hosts = [...new Set([...(allowGithub ? GITHUB_EGRESS : []), ...userHosts, ...fileHosts])];
+  if (block) {
+    info(`   allowlist: ${hosts.length} host(s) (${fileHosts.length} from ${policyFileRel || "—"})`);
+  }
   const { ipToHost, v4, v6 } = await resolveAll(hosts);
 
   const logFile = path.join(os.tmpdir(), "legion-egress.log");
@@ -332,6 +419,9 @@ async function main() {
       ipToHost,
       allowIps: [...v4, ...v6],
       dns: dnsCap,
+      policyFile,
+      policyFileRel,
+      learn,
       startedAt: new Date().toISOString(),
     }),
   );
@@ -431,7 +521,10 @@ async function post() {
   const unresolved = rows.filter(([, g]) => !g.host).length;
 
   const captureMode = st.dns && st.dns.active ? "DNS capture" : "reverse DNS";
-  let md = "## 🛡 Legion Harden Runner — outbound connections\n\n";
+  const LOGO =
+    "https://raw.githubusercontent.com/OpenSource-For-Freedom/legion_runner/main/assets/logo.jpg";
+  let md = `<div align="center"><img src="${LOGO}" alt="Legion" width="120"/></div>\n\n`;
+  md += "## 🛡 Legion Harden Runner — outbound connections\n\n";
   md += `**Egress policy:** \`${st.policy}\`${st.enforced ? " (enforced)" : ""}  ·  `;
   md += `**Resolution:** ${captureMode}  ·  `;
   md += `**Started:** ${st.startedAt}\n\n`;
@@ -457,6 +550,28 @@ async function post() {
     }
     md += "\n";
   }
+
+  // Learn → enforce: in audit mode, surface (and optionally persist) a baseline
+  // allowlist. Switching the workflow to `egress-policy: block` then denies
+  // anything not in this committed file.
+  if (st.policy !== "block" && st.policyFile && rows.length) {
+    const learned = baselineFrom(rows);
+    md += `\n### Learned egress baseline (${learned.length})\n`;
+    md += "Commit this and set `egress-policy: block` to deny everything else:\n\n";
+    md += "```\n" + learned.join("\n") + "\n```\n";
+    if (st.learn) {
+      const merged = [...new Set([...readPolicyFile(st.policyFile), ...learned])].sort();
+      try {
+        writePolicyFile(st.policyFile, merged);
+        md += `\n_Baseline written to \`${st.policyFileRel}\` (${merged.length} entries) — commit it to enforce._\n`;
+      } catch (e) {
+        md += `\n_Could not write \`${st.policyFileRel}\`: ${e.message}_\n`;
+      }
+    } else {
+      md += `\n_Set \`learn: true\` to write this to \`${st.policyFileRel}\` automatically._\n`;
+    }
+  }
+
   summary(md);
   info(`Legion Harden Runner: reported ${rows.length} outbound destination(s).`);
 

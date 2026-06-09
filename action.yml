@@ -24,6 +24,19 @@ inputs:
     description: 'Always allow GitHub + Actions endpoints (so the job can still talk to GitHub).'
     required: false
     default: 'true'
+  policy-file:
+    description: >-
+      Path (in the repo) to the learned egress allowlist. In audit mode the
+      observed destinations are surfaced as a baseline; in block mode this file's
+      hosts are part of the allowlist. Commit it to enforce a reviewable policy.
+    required: false
+    default: '.legion/egress-allowed.txt'
+  learn:
+    description: >-
+      In audit mode, write/update the policy-file with the destinations observed
+      this run (otherwise the baseline is only printed to the job summary).
+    required: false
+    default: 'false'
   disable-sudo:
     description: 'Revoke the runner user''s sudo after setup, to stop later privilege use.'
     required: false

@@ -140,13 +140,48 @@ At the end of the job you get:
 | `egress-policy` | `audit` | `audit` (never breaks builds) or `block` (default-deny allowlist). |
 | `allowed-endpoints` | `` | `host` / `host:port` entries to permit in block mode. |
 | `allow-github` | `true` | Always allow GitHub + Actions endpoints. |
-| `dns-capture` | `true` | Route the resolver through a local logger to map connections to the **exact domains** the job resolved (more accurate than reverse DNS). Falls back to reverse DNS if sudo is unavailable. |
+| `dns-capture` | `true` | Route the resolver through a local logger to map connections to the **exact domains** the job resolved (more accurate than reverse DNS). Falls back to reverse DNS if unprivileged. |
+| `policy-file` | `.legion/egress-allowed.txt` | Committed allowlist (learn → enforce). |
+| `learn` | `false` | In audit mode, write the observed destinations to `policy-file`. |
 | `disable-sudo` | `false` | Revoke the runner user's sudo after setup. |
 | `disable-telemetry` | `false` | Suppress lifecycle events (stay fully local). |
 | `legion-link` | `` | Stream egress events to a Legion desktop endpoint. |
 
 The action is pure Node + built-ins (no vendored `node_modules`), and the egress
 monitor falls back to `/proc/net` when `ss` is absent, so it runs anywhere.
+
+### Learn a baseline, then enforce deny-by-default
+
+The recommended rollout is two phases, with the allowlist living in git so it's
+reviewable in PRs — the trust anchor, not a mutable cache.
+
+**1. Learn (audit).** Run normally; the action prints the destinations it saw and
+(with `learn: true`) writes them to `.legion/egress-allowed.txt`. Commit that file.
+
+```yaml
+- uses: OpenSource-For-Freedom/legion_runner@v1
+  with:
+    egress-policy: audit
+    learn: true          # writes .legion/egress-allowed.txt — commit it
+```
+
+**2. Enforce (block).** Flip to `block`: every connection outside the committed
+baseline (plus GitHub endpoints) is denied. Flip back to `audit` to stop blocking
+and re-learn.
+
+```yaml
+- uses: OpenSource-For-Freedom/legion_runner@v1
+  with:
+    egress-policy: block   # deny anything not in .legion/egress-allowed.txt
+```
+
+Drive the toggle without editing the workflow by reading a repo variable, so
+flipping `LEGION_EGRESS` to `block` enforces fleet-wide:
+
+```yaml
+  with:
+    egress-policy: ${{ vars.LEGION_EGRESS || 'audit' }}
+```
 
 ### Run it in our Wolfi container (not `ubuntu-latest`)
 
