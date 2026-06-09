@@ -150,30 +150,35 @@ At the end of the job you get:
 The action is pure Node + built-ins (no vendored `node_modules`), and the egress
 monitor falls back to `/proc/net` when `ss` is absent, so it runs anywhere.
 
-### Learn a baseline, then enforce deny-by-default
+### Enforce deny-by-default (self-contained — nothing to install)
 
-The recommended rollout is two phases, with the allowlist living in git so it's
-reviewable in PRs — the trust anchor, not a mutable cache.
+Enforcement ships **inside the action**. A consumer needs only `uses:` — no
+committed file, no extra workflow, no container. Two ways to drive it:
 
-**1. Learn (audit).** Run normally; the action prints the destinations it saw and
-(with `learn: true`) writes them to `.legion/egress-allowed.txt`. Commit that file.
-
-```yaml
-- uses: OpenSource-For-Freedom/legion_runner@v1
-  with:
-    egress-policy: audit
-    learn: true          # writes .legion/egress-allowed.txt — commit it
-```
-
-**2. Enforce (block).** Flip to `block`: every connection outside the committed
-baseline (plus GitHub endpoints) is denied. Flip back to `audit` to stop blocking
-and re-learn.
+**A. Inline allowlist (explicit).** List the domains your job needs and switch to
+`block`. Everything else is denied.
 
 ```yaml
 - uses: OpenSource-For-Freedom/legion_runner@v1
   with:
-    egress-policy: block   # deny anything not in .legion/egress-allowed.txt
+    egress-policy: block
+    allowed-endpoints: |
+      crates.io
+      static.crates.io
 ```
+
+**B. Auto-learn, then enforce (zero-config).** Run once in `audit`; the action
+records what your job reached into the **GitHub Actions cache** (carried by the
+action itself). Flip to `block` and it enforces that learned baseline — no file
+to commit, no separate workflow.
+
+```yaml
+  with:
+    egress-policy: ${{ vars.LEGION_EGRESS || 'audit' }}   # audit learns, block enforces
+```
+
+Set the repo variable `LEGION_EGRESS=block` to enforce fleet-wide; back to
+`audit` to re-learn.
 
 In block mode with `dns-capture` on (the default), enforcement is **by domain**:
 as an allowlisted domain resolves, the firewall is opened for *its current IPs*
@@ -182,13 +187,9 @@ before the connection is made. So CDN/cloud endpoints that rotate IPs
 everything else is dropped. Allowlist entries match subdomains too
 (`github.com` allows `api.github.com`).
 
-Drive the toggle without editing the workflow by reading a repo variable, so
-flipping `LEGION_EGRESS` to `block` enforces fleet-wide:
-
-```yaml
-  with:
-    egress-policy: ${{ vars.LEGION_EGRESS || 'audit' }}
-```
+> **Optional, for teams who want a reviewable allowlist in git:** set
+> `learn: true` in an audit run to also write `.legion/egress-allowed.txt`, which
+> `block` reads if present. Purely optional — the cache path above needs none of it.
 
 ## Hardening at a glance
 

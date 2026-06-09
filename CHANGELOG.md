@@ -20,9 +20,12 @@ Unreleased section.
   Legion desktop "link" that heartbeats lifecycle events.
 - **Bash backbone**: `install.sh` (service user + official runner fetch) and
   `harden.sh` (systemd unit, sysctl drop-in, nftables default-deny egress).
-- **Legion Harden Runner action**: dependency-free Node 20 action (main + post)
+- **Legion Harden Runner action**: dependency-free Node 24 action (main + post)
   that monitors outbound connections and prints them as a markdown table in the
-  job summary, with reverse-DNS/DNS-capture naming, a learn→enforce baseline,
-  and a `block` mode with dynamic allow-by-domain egress enforcement.
+  job summary, with reverse-DNS/DNS-capture naming and a `block` mode with
+  dynamic allow-by-domain egress enforcement. Enforcement is fully self-contained:
+  the learned baseline is persisted in the GitHub Actions cache *inside the
+  action*, so audit→block needs no committed file or extra workflow (an optional
+  committed `.legion/egress-allowed.txt` is supported for teams who want it).
 - **Release automation**: verify-then-tag workflow with SemVer auto-patch and a
   moving `v1` tag.

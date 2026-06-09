@@ -16,6 +16,7 @@ const dns = require("node:dns").promises;
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const cache = require("./cache.js");
 
 // GitHub + Actions endpoints a job almost always needs. Kept in sync with
 // legionr-core's harden::GITHUB_EGRESS.
@@ -167,6 +168,45 @@ function writePolicyFile(p, hosts) {
 /// The set of destinations observed this run (domain when known, else IP).
 function baselineFrom(rows) {
   return [...new Set(rows.map(([dest, g]) => g.host || dest).filter(Boolean))].sort();
+}
+
+// ── Cross-run baseline persistence (Actions cache) ──────────────────────────
+// Lets a consumer learn in audit and enforce in block with zero extra files or
+// workflows — the baseline rides in the Actions cache, inside the action.
+function cacheKeys() {
+  const ref = (process.env.GITHUB_REF_NAME || "default").replace(/[^A-Za-z0-9._-]/g, "-");
+  const base = `legion-egress-${ref}`;
+  const runId = process.env.GITHUB_RUN_ID || "0";
+  const attempt = process.env.GITHUB_RUN_ATTEMPT || "1";
+  return {
+    saveKey: `${base}-${runId}-${attempt}`,
+    primary: `${base}-current`,
+    restoreKeys: [`${base}-`, "legion-egress-"],
+  };
+}
+
+async function cacheRestoreDomains() {
+  try {
+    const { primary, restoreKeys } = cacheKeys();
+    const txt = await cache.restore(primary, restoreKeys);
+    if (!txt) return [];
+    return txt
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith("#"));
+  } catch {
+    return [];
+  }
+}
+
+async function cacheSaveDomains(domains) {
+  try {
+    if (!domains.length) return;
+    const { saveKey } = cacheKeys();
+    await cache.save(saveKey, domains.join("\n") + "\n");
+  } catch {
+    /* best-effort */
+  }
 }
 
 // ── Egress monitor ──────────────────────────────────────────────────────────
@@ -388,12 +428,20 @@ async function main() {
     return;
   }
 
-  // Allowlist = GitHub endpoints + explicit inputs + the committed baseline file.
+  // Allowlist = GitHub endpoints + inline input + committed file + the baseline
+  // the action learned on previous runs (restored from the Actions cache). The
+  // cache is what makes audit→block self-contained: no file or workflow needed.
   const userHosts = parseEndpoints(input("allowed-endpoints", "")).map((e) => e.host);
   const fileHosts = policyFile ? readPolicyFile(policyFile) : [];
-  const hosts = [...new Set([...(allowGithub ? GITHUB_EGRESS : []), ...userHosts, ...fileHosts])];
+  const cachedHosts = await cacheRestoreDomains();
+  const hosts = [
+    ...new Set([...(allowGithub ? GITHUB_EGRESS : []), ...userHosts, ...fileHosts, ...cachedHosts]),
+  ];
   if (block) {
-    info(`   allowlist: ${hosts.length} host(s) (${fileHosts.length} from ${policyFileRel || "—"})`);
+    info(
+      `   allowlist: ${hosts.length} host(s) ` +
+        `(${userHosts.length} inline, ${fileHosts.length} file, ${cachedHosts.length} learned)`,
+    );
   }
   const { ipToHost, v4, v6 } = await resolveAll(hosts);
 
@@ -569,15 +617,27 @@ async function post() {
     md += "\n";
   }
 
-  // Learn → enforce: only when actively learning do we surface/persist the
-  // baseline allowlist (otherwise it just re-lists the table above).
-  if (st.policy !== "block" && st.policyFile && st.learn && rows.length) {
-    const learned = baselineFrom(rows);
-    const merged = [...new Set([...readPolicyFile(st.policyFile), ...learned])].sort();
+  // Persist the learned baseline to the Actions cache so a later block run can
+  // enforce it with no committed file or extra workflow. Best-effort.
+  const observed = baselineFrom(rows);
+  if (observed.length) {
+    const prev = await cacheRestoreDomains();
+    const merged = [...new Set([...prev, ...observed])].sort();
+    await cacheSaveDomains(merged);
+    if (cache.available()) {
+      md += `\n_Learned baseline saved to the Actions cache (${merged.length} domains). `;
+      md += "Set `egress-policy: block` to enforce it — no file or extra workflow needed._\n";
+    }
+  }
+
+  // When explicitly learning, also write the committed policy file (for teams
+  // who prefer a reviewable, in-repo allowlist).
+  if (st.policy !== "block" && st.policyFile && st.learn && observed.length) {
+    const merged = [...new Set([...readPolicyFile(st.policyFile), ...observed])].sort();
     try {
       writePolicyFile(st.policyFile, merged);
       md += `\n### Learned egress baseline (${merged.length})\n`;
-      md += `Written to \`${st.policyFileRel}\` — commit it, then set \`egress-policy: block\` to enforce:\n\n`;
+      md += `Also written to \`${st.policyFileRel}\` — commit it for a reviewable allowlist:\n\n`;
       md += "```\n" + merged.join("\n") + "\n```\n";
     } catch (e) {
       md += `\n_Could not write \`${st.policyFileRel}\`: ${e.message}_\n`;
