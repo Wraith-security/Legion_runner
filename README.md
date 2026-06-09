@@ -109,7 +109,9 @@ Legion Runner also ships a **drop-in workflow action** that hardens *any* job �
 including GitHub-hosted runners — by monitoring (and optionally blocking)
 outbound network traffic, then printing every outbound connection as a markdown
 table in the job summary. It's an open, dependency-free alternative to
-proprietary runner-hardening agents.
+proprietary runner-hardening agents, with **socket-layer eBPF capture** (process
+attribution, bypass-proof), **dynamic allow-by-domain** blocking, and
+**self-contained learn→enforce** (no external service).
 
 ```yaml
 steps:
@@ -127,13 +129,21 @@ steps:
 > supply-chain hygiene, pin to a full commit SHA instead —
 > `uses: OpenSource-For-Freedom/legion_runner@<sha>` — and let Dependabot bump it.
 
-At the end of the job you get:
+At the end of the job you get (the **Process** column appears when the eBPF
+agent is active):
 
 > ## 🛡 Legion Harden Runner — outbound connections
-> | Destination | Host | Connections | Decision |
-> |---|---|---:|---|
-> | `140.82.112.3:443` | github.com | 24 | 👁 Audited |
-> | `104.16.0.1:443` | registry.npmjs.org | 8 | ✅ Allowed |
+> **Capture:** eBPF (tcp_connect) · **Resolution:** DNS capture
+>
+> | Destination | Address | Port(s) | Process | Conns | Decision |
+> |---|---|---|---|---:|---|
+> | github.com | `140.82.112.3` | 443 | git | 24 | ✅ Allowed |
+> | registry.npmjs.org | `104.16.0.1` | 443 | node | 8 | ✅ Allowed |
+>
+> ### ⛔ Blocked attempts
+> | Destination | Address |
+> |---|---|
+> | telemetry.example.net | `203.0.113.7:443` |
 
 | Input | Default | Description |
 |-------|---------|-------------|
@@ -141,14 +151,18 @@ At the end of the job you get:
 | `allowed-endpoints` | `` | `host` / `host:port` entries to permit in block mode. |
 | `allow-github` | `true` | Always allow GitHub + Actions endpoints. |
 | `dns-capture` | `true` | Route the resolver through a local logger to map connections to the **exact domains** the job resolved (more accurate than reverse DNS). Falls back to reverse DNS if unprivileged. |
+| `ebpf` | `auto` | `auto` uses the Rust/aya eBPF agent for socket-layer capture + process attribution (local binary, else best-effort download of the latest release asset); `off` disables it. Falls back to the `ss`/`/proc` sampler. |
 | `policy-file` | `.legion/egress-allowed.txt` | Committed allowlist (learn → enforce). |
 | `learn` | `false` | In audit mode, write the observed destinations to `policy-file`. |
 | `disable-sudo` | `false` | Revoke the runner user's sudo after setup. |
 | `disable-telemetry` | `false` | Suppress lifecycle events (stay fully local). |
 | `legion-link` | `` | Stream egress events to a Legion desktop endpoint. |
 
-The action is pure Node + built-ins (no vendored `node_modules`), and the egress
-monitor falls back to `/proc/net` when `ss` is absent, so it runs anywhere.
+The action core is pure Node + built-ins (no vendored `node_modules`). Capture
+layers degrade gracefully: **eBPF agent** (socket-layer, process attribution) →
+**`ss`** → **`/proc/net`**, so it runs anywhere. The eBPF agent
+([`agent/`](agent/)) is a separate Rust/aya crate, attached to each release and
+fetched on demand.
 
 ### Enforce deny-by-default (self-contained — nothing to install)
 
