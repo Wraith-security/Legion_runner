@@ -1,0 +1,64 @@
+name: Legion — learn egress baseline
+
+# Run this once (manually) to capture what the build legitimately reaches, then
+# it commits .legion/egress-allowed.txt. After that, set the CI harden steps to
+# egress-policy: block and they'll pass — anything outside the baseline is denied.
+#
+# Re-run whenever the build gains a new dependency/endpoint.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  learn:
+    name: Capture & commit baseline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Audit mode: monitors + DNS-captures everything the steps below reach.
+      - name: Harden runner (Legion, learn)
+        uses: ./
+        with:
+          egress-policy: audit
+          policy-file: .legion/egress-allowed.txt
+
+      # Reproduce the real CI egress so it gets recorded.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Exercise the toolchain, registry, and apt
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          cargo fetch
+          cargo build --workspace
+          cargo install cargo-audit --locked || true
+
+      # Compute the baseline from the captured data (runs before the post step,
+      # so the file can be committed in this job).
+      - name: Write learned baseline
+        run: node ./action/baseline.js
+
+      - name: Commit baseline
+        run: |
+          if git diff --quiet -- .legion/egress-allowed.txt 2>/dev/null \
+             && git ls-files --error-unmatch .legion/egress-allowed.txt >/dev/null 2>&1; then
+            echo "Baseline unchanged."; exit 0
+          fi
+          git config user.name "legion-bot"
+          git config user.email "legion-bot@users.noreply.github.com"
+          git add .legion/egress-allowed.txt
+          git commit -m "Legion: update learned egress baseline [skip ci]"
+          git push
+
+      - name: Summary
+        run: |
+          echo "### Learned egress baseline" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat .legion/egress-allowed.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "Now set the CI harden steps to \`egress-policy: block\`." >> "$GITHUB_STEP_SUMMARY"
