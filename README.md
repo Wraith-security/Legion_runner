@@ -2,6 +2,11 @@
   <img src="assets/logo.jpg" alt="Legion Runner" width="200"/>
   <h1>Legion Runner</h1>
   <p><em>Hardened · ephemeral · single-use GitHub Actions runner / runs with joy on Linux</em></p>
+  <p>
+    <a href="https://github.com/marketplace/actions/legion-harden-runner"><img src="https://img.shields.io/badge/Marketplace-Legion%20Harden%20Runner-2ea44f?logo=github" alt="GitHub Marketplace"></a>
+    <a href="https://github.com/OpenSource-For-Freedom/legion_runner/releases"><img src="https://img.shields.io/github/v/release/OpenSource-For-Freedom/legion_runner?color=22c55e" alt="Latest release"></a>
+    <img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT">
+  </p>
 </div>
 
 A **hardened, ephemeral, single-use GitHub Actions runner** for Linux : built to
@@ -117,6 +122,10 @@ steps:
   - uses: actions/checkout@v4
   - run: ./build.sh
 ```
+
+> **Pinning:** `@v1` always resolves to the latest `1.x` release. For stricter
+> supply-chain hygiene, pin to a full commit SHA instead —
+> `uses: OpenSource-For-Freedom/legion_runner@<sha>` — and let Dependabot bump it.
 
 At the end of the job you get:
 
