@@ -382,6 +382,45 @@ async function resolvesVia(server) {
   }
 }
 
+/// Can glibc getaddrinfo() resolve a name? (Validates an nsswitch reroute,
+/// since that path — unlike `resolvesVia` — goes through nss.)
+async function resolvesViaGetaddrinfo() {
+  try {
+    await Promise.race([
+      dns.lookup("github.com"),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 2500)),
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/// Route glibc getaddrinfo through the capture forwarder by replacing the
+/// nsswitch `hosts:` line (which often uses nss-resolve/systemd-resolved that
+/// ignores resolv.conf). Best-effort, verified, and recorded for restore.
+async function rerouteNsswitch(out) {
+  try {
+    const nss = fs.readFileSync("/etc/nsswitch.conf", "utf8");
+    // Only act if a bypassing module is present (resolve/mymachines/mdns).
+    if (!/^hosts:.*\b(resolve|mymachines|mdns)/m.test(nss)) return;
+    const backup = path.join(os.tmpdir(), "nsswitch.conf.legion.bak");
+    sudo(["cp", "/etc/nsswitch.conf", backup]);
+    const tmp = path.join(os.tmpdir(), "nsswitch.legion");
+    fs.writeFileSync(tmp, nss.replace(/^hosts:.*$/m, "hosts: files myhostname dns"));
+    sudo(["cp", tmp, "/etc/nsswitch.conf"]);
+    if (await resolvesViaGetaddrinfo()) {
+      out.nsswitchBackup = backup;
+      info("   routed getaddrinfo through the capture forwarder (nsswitch)");
+    } else {
+      sudo(["cp", backup, "/etc/nsswitch.conf"]); // revert — don't break resolution
+      warn("nsswitch reroute reverted (getaddrinfo check failed); some hosts may stay unnamed");
+    }
+  } catch (e) {
+    warn(`could not reroute nsswitch (${e.message}); some getaddrinfo lookups may bypass capture`);
+  }
+}
+
 /// Start the local DNS forwarder and route the system resolver through it.
 /// Best-effort: on any failure we restore and fall back to reverse DNS.
 async function startDnsCapture(opts = {}) {
@@ -426,6 +465,9 @@ async function startDnsCapture(opts = {}) {
       `   DNS capture active (resolver → local logger → ${upstream})` +
         (out.enforce ? " — enforcing allow-by-domain" : ""),
     );
+    // Also route getaddrinfo (curl/apt/cargo/git) through the forwarder so their
+    // lookups are captured and named, not just resolv.conf/c-ares callers.
+    await rerouteNsswitch(out);
   } catch (e) {
     warn(`DNS capture unavailable (${e.message}); falling back to reverse DNS`);
     killDnsForwarder(out.pid);
@@ -474,6 +516,11 @@ function stopDnsCapture(dns) {
   killDnsForwarder(dns.pid);
   try {
     if (dns.backup) sudo(["cp", dns.backup, "/etc/resolv.conf"]);
+  } catch {
+    /* best-effort restore */
+  }
+  try {
+    if (dns.nsswitchBackup) sudo(["cp", dns.nsswitchBackup, "/etc/nsswitch.conf"]);
   } catch {
     /* best-effort restore */
   }
@@ -740,7 +787,7 @@ async function post() {
     md += `\n_${rows.length} unique destination(s) observed._`;
     if (unresolved) {
       const tip = st.dns && st.dns.active
-        ? "connected by raw IP (no DNS lookup), so no domain is known"
+        ? "no name resolved — a raw-IP connection, or a name resolved via systemd-resolved (which bypasses the capture forwarder); no PTR record either"
         : "had no PTR record — enable `dns-capture` for exact domains";
       md += ` _(${unresolved} ${tip}.)_`;
     }
