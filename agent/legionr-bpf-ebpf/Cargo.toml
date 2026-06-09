@@ -11,9 +11,5 @@ legionr-bpf-common = { path = "../legionr-bpf-common" }
 [[bin]]
 name = "legionr-bpf"
 path = "src/main.rs"
-
-# Built for the BPF target; this crate is compiled by the userspace build.rs.
-[profile.dev]
-opt-level = 3
-[profile.release]
-lto = true
+# Built for the BPF target by the userspace build.rs (aya-build). Profiles are
+# inherited from the agent workspace root.

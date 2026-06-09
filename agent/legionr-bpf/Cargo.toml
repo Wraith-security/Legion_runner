@@ -16,3 +16,4 @@ legionr-bpf-common = { path = "../legionr-bpf-common", features = ["user"] }
 
 [build-dependencies]
 aya-build = { git = "https://github.com/aya-rs/aya" }
+cargo_metadata = "0.23"
