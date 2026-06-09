@@ -1,17 +1,15 @@
-# Standalone package (excluded from the agent workspace) — concrete fields, no
-# workspace inheritance. Built only for the BPF target via aya-build.
+# Member of the agent workspace, but excluded from default-members so only
+# aya-build compiles it (for the BPF target), never the host toolchain.
 [package]
 name = "legionr-bpf-ebpf"
-version = "0.1.0"
-edition = "2021"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [dependencies]
 aya-ebpf = { git = "https://github.com/aya-rs/aya" }
 legionr-bpf-common = { path = "../legionr-bpf-common" }
 
 [[bin]]
-name = "legionr-bpf"
+name = "legionr-bpf-ebpf"
 path = "src/main.rs"
-# Built for the BPF target by the userspace build.rs (aya-build). Profiles are
-# inherited from the agent workspace root.

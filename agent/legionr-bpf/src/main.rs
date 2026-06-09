@@ -33,7 +33,7 @@ fn format_event(e: &ConnEvent) -> Option<String> {
 fn main() -> anyhow::Result<()> {
     let mut bpf = Ebpf::load(aya::include_bytes_aligned!(concat!(
         env!("OUT_DIR"),
-        "/legionr-bpf"
+        "/legionr-bpf-ebpf"
     )))?;
 
     let prog: &mut TracePoint = bpf
