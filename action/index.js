@@ -571,24 +571,18 @@ async function post() {
     md += "\n";
   }
 
-  // Learn → enforce: in audit mode, surface (and optionally persist) a baseline
-  // allowlist. Switching the workflow to `egress-policy: block` then denies
-  // anything not in this committed file.
-  if (st.policy !== "block" && st.policyFile && rows.length) {
+  // Learn → enforce: only when actively learning do we surface/persist the
+  // baseline allowlist (otherwise it just re-lists the table above).
+  if (st.policy !== "block" && st.policyFile && st.learn && rows.length) {
     const learned = baselineFrom(rows);
-    md += `\n### Learned egress baseline (${learned.length})\n`;
-    md += "Commit this and set `egress-policy: block` to deny everything else:\n\n";
-    md += "```\n" + learned.join("\n") + "\n```\n";
-    if (st.learn) {
-      const merged = [...new Set([...readPolicyFile(st.policyFile), ...learned])].sort();
-      try {
-        writePolicyFile(st.policyFile, merged);
-        md += `\n_Baseline written to \`${st.policyFileRel}\` (${merged.length} entries) — commit it to enforce._\n`;
-      } catch (e) {
-        md += `\n_Could not write \`${st.policyFileRel}\`: ${e.message}_\n`;
-      }
-    } else {
-      md += `\n_Set \`learn: true\` to write this to \`${st.policyFileRel}\` automatically._\n`;
+    const merged = [...new Set([...readPolicyFile(st.policyFile), ...learned])].sort();
+    try {
+      writePolicyFile(st.policyFile, merged);
+      md += `\n### Learned egress baseline (${merged.length})\n`;
+      md += `Written to \`${st.policyFileRel}\` — commit it, then set \`egress-policy: block\` to enforce:\n\n`;
+      md += "```\n" + merged.join("\n") + "\n```\n";
+    } catch (e) {
+      md += `\n_Could not write \`${st.policyFileRel}\`: ${e.message}_\n`;
     }
   }
 

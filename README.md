@@ -190,29 +190,6 @@ flipping `LEGION_EGRESS` to `block` enforces fleet-wide:
     egress-policy: ${{ vars.LEGION_EGRESS || 'audit' }}
 ```
 
-### Run it in our Wolfi container (not `ubuntu-latest`)
-
-The repo ships a Chainguard **Wolfi** [`Dockerfile`](Dockerfile) carrying the
-`legionr` binary, Node, and the network tooling. Because Wolfi is glibc-based,
-GitHub's injected node runs inside it (unlike Alpine/musl), so you can run whole
-jobs in our hardened image:
-
-```yaml
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/opensource-for-freedom/legion_runner:latest
-      options: --cap-add=NET_ADMIN     # only needed for block mode
-    steps:
-      - uses: ./                        # Legion Harden Runner, inside Wolfi
-      - uses: actions/checkout@v4
-      - run: make build
-```
-
-See [`.github/workflows/harden-selftest.yml`](.github/workflows/harden-selftest.yml)
-for the workflow that builds the image and exercises the action inside it.
-
 ## Hardening at a glance
 
 - **Identity:** dedicated non-root `legionr` user; `root` is refused outright.
