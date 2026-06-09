@@ -19,7 +19,7 @@ jobs:
     name: Block allows allowlisted, denies the rest
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Harden (block) with an inline allowlist
         # Tests THIS repo's enforcement code (not the published action) — that's

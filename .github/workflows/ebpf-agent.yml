@@ -21,7 +21,7 @@ jobs:
       run:
         working-directory: agent
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install nightly + rust-src
         uses: dtolnay/rust-toolchain@nightly
