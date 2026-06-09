@@ -1,7 +1,7 @@
 <div align="center">
   <img src="assets/rust.PNG" alt="Legion Runner" width="200"/>
   <h1>Legion Runner</h1>
-  <p><em>Hardened · ephemeral · single-use GitHub Actions runner / runs with joy on Linux</em></p>
+  <p><em>Hardened ~ rust-core ~ ephemeral ~ single-use GitHub Actions runner / runs with joy on Linux</em></p>
   <p>
     <a href="https://github.com/marketplace/actions/legion-harden-runner"><img src="https://img.shields.io/badge/Marketplace-Legion%20Harden%20Runner-2ea44f?logo=github" alt="GitHub Marketplace"></a>
     <a href="https://github.com/OpenSource-For-Freedom/legion_runner/releases"><img src="https://img.shields.io/github/v/release/OpenSource-For-Freedom/legion_runner?color=22c55e" alt="Latest release"></a>
