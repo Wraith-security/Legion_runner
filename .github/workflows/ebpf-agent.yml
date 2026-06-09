@@ -1,0 +1,50 @@
+name: eBPF agent
+
+# Builds and tests the Rust/aya eBPF capture agent (agent/). Separate from the
+# main CI because it needs the eBPF toolchain (nightly + bpf-linker). This is
+# the iteration surface for the eBPF backend; the action runs fine without it
+# (it falls back to the ss//proc sampler).
+
+on:
+  push:
+    branches: ['**']
+    paths:
+      - 'agent/**'
+      - '.github/workflows/ebpf-agent.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & test legionr-bpf
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nightly + rust-src
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src, clippy, rustfmt
+
+      - name: Install bpf-linker
+        run: cargo install bpf-linker --locked
+
+      - name: Userspace unit tests (no kernel needed)
+        run: cargo test -p legionr-bpf
+
+      - name: Build agent (compiles the eBPF program)
+        run: cargo build --release
+
+      - name: Smoke-load on the runner kernel (has BTF)
+        run: |
+          sudo timeout 5 ./target/release/legionr-bpf > /tmp/legionc.log 2>/tmp/legionc.err &
+          sleep 1
+          # Generate a connection to capture.
+          curl -sS -o /dev/null --max-time 5 https://example.com || true
+          sleep 1
+          echo "=== captured ==="; sudo cat /tmp/legionc.log | head -20 || true
+          echo "=== stderr ==="; sudo cat /tmp/legionc.err | head -20 || true
+          grep -q "LEGIONC " /tmp/legionc.log && echo "PASS: agent captured a connection" || {
+            echo "NOTE: no capture (see stderr above) — agent build/load needs a fix"; exit 1; }

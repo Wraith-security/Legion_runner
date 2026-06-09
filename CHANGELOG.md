@@ -11,18 +11,58 @@ Unreleased section.
 
 ## [Unreleased]
 
+First feature release of the full Legion Runner platform: the hardened ephemeral
+runner, the Harden Runner action (audit/block egress with eBPF capture), and the
+release/learn automation.
+
 ### Added
-- **Ephemeral runner control plane** (`legionr`): `provision`, `run`, `harden`,
-  `pair`, `status`, `doctor`. Every job lands on a fresh, single-use runner that
-  mints a JIT credential, runs one job, wipes its workspace, and self-destructs.
-- **legionr-core**: GitHub JIT/registration API client, ephemeral lifecycle,
+
+**Ephemeral runner control plane (`legionr`, Rust + Bash + systemd)**
+- CLI: `provision`, `run`, `harden`, `pair`, `status`, `doctor`. Every job lands
+  on a fresh, single-use runner that mints a JIT credential, runs one job, wipes
+  its workspace, and self-destructs.
+- `legionr-core`: GitHub JIT/registration API client, ephemeral lifecycle,
   systemd hardening-profile generator, rootless container sandbox backend, and a
   Legion desktop "link" that heartbeats lifecycle events.
-- **Bash backbone**: `install.sh` (service user + official runner fetch) and
-  `harden.sh` (systemd unit, sysctl drop-in, nftables default-deny egress).
-- **Legion Harden Runner action**: dependency-free Node 20 action (main + post)
-  that monitors outbound connections and prints them as a markdown table in the
-  job summary, with reverse-DNS/DNS-capture naming, a learn→enforce baseline,
-  and a `block` mode with dynamic allow-by-domain egress enforcement.
-- **Release automation**: verify-then-tag workflow with SemVer auto-patch and a
-  moving `v1` tag.
+- Bash backbone: `install.sh` (service user + official runner fetch) and
+  `harden.sh` (hardened systemd unit, sysctl drop-in, nftables default-deny
+  egress allowlist).
+
+**Legion Harden Runner action (dependency-free Node 24, main + post)**
+- **Audit**: monitors outbound connections and prints them as a markdown table
+  in the job summary, named via DNS-capture → forward allowlist → reverse-DNS.
+- **Block**: default-deny egress with **dynamic allow-by-domain** — an
+  allowlisted domain's current IPs are opened just-in-time as it resolves, so
+  CDN/cloud endpoints that rotate IPs keep working without pinning addresses.
+  Subdomain matching included.
+- **Self-contained learn → enforce**: the learned baseline is persisted in the
+  GitHub Actions cache *inside the action*, so audit→block needs no committed
+  file and no extra workflow. An optional committed `.legion/egress-allowed.txt`
+  is supported for teams who want a reviewable allowlist.
+- **eBPF capture (Rust/aya)**: the `legionr-bpf` agent (tracepoint on
+  `sys_enter_connect`) captures connections at the socket layer — bypass-proof
+  (nss-resolve/systemd-resolved can't evade it) — and adds **process
+  attribution** (PID + comm). `ebpf: auto` uses a local binary or best-effort
+  downloads the agent from the latest release; falls back to the `ss`/`/proc`
+  sampler when unavailable.
+- **Blocked-attempt visibility**: block mode logs denied packets (rate-limited
+  iptables/ip6tables LOG) and lists them in the summary instead of dropping
+  silently.
+- Inputs: `egress-policy`, `allowed-endpoints`, `allow-github`, `dns-capture`,
+  `ebpf`, `policy-file`, `learn`, `disable-sudo`, `disable-telemetry`,
+  `legion-link`, `sample-interval`.
+
+**CI / automation**
+- Release-on-main: verify-then-tag with SemVer auto-patch, a moving `v1` tag,
+  CHANGELOG-driven notes, and a job that builds + attaches the `legionr-bpf`
+  agent as a release asset.
+- `legion-learn` workflow to capture and commit a baseline; `ebpf-agent`
+  workflow that builds + smoke-loads the agent (nightly + bpf-linker); enforce
+  self-test (allow/deny); `node:test` action regression suite; shellcheck,
+  cargo-audit, and cargo-deny gates.
+
+### Notes
+- The eBPF agent is a separate Cargo workspace (aya pinned to a fixed rev) kept
+  out of the main build so the core toolchain stays light. It engages on Linux
+  hosts with kernel BTF and privilege; everything degrades gracefully otherwise.
+

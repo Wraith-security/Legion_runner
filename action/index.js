@@ -16,6 +16,8 @@ const dns = require("node:dns").promises;
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const cache = require("./cache.js");
+const ebpf = require("./ebpf.js");
 
 // GitHub + Actions endpoints a job almost always needs. Kept in sync with
 // legionr-core's harden::GITHUB_EGRESS.
@@ -85,6 +87,18 @@ function sudo(args) {
     return execFileSync("sudo", ["-n", ...args], { stdio: ["ignore", "ignore", "pipe"] });
   }
   throw new Error("no privilege (need root or sudo)");
+}
+// Privileged command capturing stdout (best-effort; "" on failure).
+function sudoOut(args) {
+  try {
+    const argv = IS_ROOT ? args : hasSudo() ? ["-n", ...args] : null;
+    if (!argv) return "";
+    const bin = IS_ROOT ? args[0] : "sudo";
+    const real = IS_ROOT ? args.slice(1) : argv;
+    return execFileSync(bin, real, { stdio: ["ignore", "pipe", "ignore"] }).toString();
+  } catch {
+    return "";
+  }
 }
 // Privileged detached spawn, with an error handler so a missing binary can
 // never crash the action.
@@ -169,6 +183,69 @@ function baselineFrom(rows) {
   return [...new Set(rows.map(([dest, g]) => g.host || dest).filter(Boolean))].sort();
 }
 
+// ── Cross-run baseline persistence (Actions cache) ──────────────────────────
+// Lets a consumer learn in audit and enforce in block with zero extra files or
+// workflows — the baseline rides in the Actions cache, inside the action.
+function cacheKeys() {
+  const ref = (process.env.GITHUB_REF_NAME || "default").replace(/[^A-Za-z0-9._-]/g, "-");
+  const base = `legion-egress-${ref}`;
+  const runId = process.env.GITHUB_RUN_ID || "0";
+  const attempt = process.env.GITHUB_RUN_ATTEMPT || "1";
+  return {
+    saveKey: `${base}-${runId}-${attempt}`,
+    primary: `${base}-current`,
+    restoreKeys: [`${base}-`, "legion-egress-"],
+  };
+}
+
+async function cacheRestoreDomains() {
+  try {
+    const { primary, restoreKeys } = cacheKeys();
+    const txt = await cache.restore(primary, restoreKeys);
+    if (!txt) return [];
+    return txt
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith("#"));
+  } catch {
+    return [];
+  }
+}
+
+async function cacheSaveDomains(domains) {
+  try {
+    if (!domains.length) return;
+    const { saveKey } = cacheKeys();
+    await cache.save(saveKey, domains.join("\n") + "\n");
+  } catch {
+    /* best-effort */
+  }
+}
+
+// ── eBPF capture (preferred) ────────────────────────────────────────────────
+// Socket-layer connection capture that can't be bypassed by nss-resolve. Writes
+// "LEGIONC ip port pid comm" lines to its log. Falls back silently when eBPF is
+// unavailable (the ss//proc sampler still runs).
+function startEbpf(connectLog, bin) {
+  const out = { active: false, log: connectLog };
+  try {
+    if (!bin) return out;
+    fs.writeFileSync(connectLog, "");
+    const fd = fs.openSync(connectLog, "a");
+    const child = spawnPrivileged(bin, [], {
+      detached: true,
+      stdio: ["ignore", fd, "ignore"],
+    });
+    out.pid = child.pid;
+    child.unref();
+    out.active = true;
+    info("   eBPF capture active (legionr-bpf: kprobe tcp_connect — socket-layer, bypass-proof)");
+  } catch (e) {
+    warn(`eBPF capture unavailable (${e.message}); using the ss//proc sampler`);
+  }
+  return out;
+}
+
 // ── Egress monitor ──────────────────────────────────────────────────────────
 function startMonitor(logFile, intervalSec) {
   // Detached Node sampler (action/monitor.js): prefers `ss`, falls back to
@@ -205,8 +282,45 @@ function applyEgressBlock(ipv4, ipv6) {
     sudo([bin, "-A", CHAIN, "-p", "udp", "--dport", "53", "-j", "ACCEPT"]);
     sudo([bin, "-A", CHAIN, "-p", "tcp", "--dport", "53", "-j", "ACCEPT"]);
     for (const ip of ips) sudo([bin, "-A", CHAIN, "-d", ip, "-j", "ACCEPT"]);
+    // Log denied packets (rate-limited) before dropping, so post() can surface
+    // exactly what was blocked instead of dropping silently.
+    try {
+      sudo([bin, "-A", CHAIN, "-m", "limit", "--limit", "60/min", "--limit-burst", "20",
+        "-j", "LOG", "--log-prefix", "LEGION-DENY ", "--log-level", "4"]);
+    } catch {
+      /* LOG target unavailable — enforcement still works, just no deny list */
+    }
     sudo([bin, "-A", CHAIN, "-j", "DROP"]); // default-deny
   }
+}
+
+/// Parse denied destinations from kernel-log lines our LOG rule emitted.
+/// Pure (testable): returns unique "ip:port" strings.
+function parseDeniedLog(text) {
+  const out = new Set();
+  for (const line of (text || "").split("\n")) {
+    if (!line.includes("LEGION-DENY")) continue;
+    const dst = line.match(/\bDST=([0-9a-fA-F:.]+)/);
+    const dpt = line.match(/\bDPT=(\d+)/);
+    if (dst) out.add(`${normalizeIp(dst[1])}:${dpt ? dpt[1] : "?"}`);
+  }
+  return [...out];
+}
+
+/// Read the kernel log (best-effort, needs privilege) and return denied peers.
+function readDeniedDestinations() {
+  for (const cmd of [["dmesg"], ["journalctl", "-k", "--no-pager", "-n", "2000"]]) {
+    try {
+      const out = sudoOut(cmd);
+      if (out) {
+        const denied = parseDeniedLog(out);
+        if (denied.length) return denied;
+      }
+    } catch {
+      /* try next source */
+    }
+  }
+  return [];
 }
 
 function disableSudo() {
@@ -365,6 +479,24 @@ function stopDnsCapture(dns) {
   }
 }
 
+/// Stop the eBPF (bpftrace) capture; best-effort.
+function stopEbpf(cap) {
+  if (!cap || !cap.active) return;
+  if (cap.pid) {
+    try {
+      sudo(["kill", String(cap.pid)]);
+      return;
+    } catch {
+      /* fall through */
+    }
+  }
+  try {
+    sudo(["pkill", "-f", "bpftrace"]);
+  } catch {
+    /* nothing to kill */
+  }
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 async function main() {
   const policy = input("egress-policy", "audit").toLowerCase();
@@ -388,18 +520,34 @@ async function main() {
     return;
   }
 
-  // Allowlist = GitHub endpoints + explicit inputs + the committed baseline file.
+  // Allowlist = GitHub endpoints + inline input + committed file + the baseline
+  // the action learned on previous runs (restored from the Actions cache). The
+  // cache is what makes audit→block self-contained: no file or workflow needed.
   const userHosts = parseEndpoints(input("allowed-endpoints", "")).map((e) => e.host);
   const fileHosts = policyFile ? readPolicyFile(policyFile) : [];
-  const hosts = [...new Set([...(allowGithub ? GITHUB_EGRESS : []), ...userHosts, ...fileHosts])];
+  const cachedHosts = await cacheRestoreDomains();
+  const hosts = [
+    ...new Set([...(allowGithub ? GITHUB_EGRESS : []), ...userHosts, ...fileHosts, ...cachedHosts]),
+  ];
   if (block) {
-    info(`   allowlist: ${hosts.length} host(s) (${fileHosts.length} from ${policyFileRel || "—"})`);
+    info(
+      `   allowlist: ${hosts.length} host(s) ` +
+        `(${userHosts.length} inline, ${fileHosts.length} file, ${cachedHosts.length} learned)`,
+    );
   }
   const { ipToHost, v4, v6 } = await resolveAll(hosts);
 
   const logFile = path.join(os.tmpdir(), "legion-egress.log");
   fs.writeFileSync(logFile, "");
   const pid = startMonitor(logFile, interval);
+
+  // Preferred capture: eBPF (socket-layer, bypass-proof, with process names).
+  // The ss//proc sampler above stays as a fallback when eBPF is unavailable.
+  let ebpfCap = { active: false, log: "" };
+  if (input("ebpf", "auto").toLowerCase() !== "off") {
+    const bin = await ebpf.ensureBinary(); // local, else best-effort download
+    ebpfCap = startEbpf(path.join(os.tmpdir(), "legion-connect.log"), bin);
+  }
 
   let enforced = false;
   if (block) {
@@ -434,6 +582,7 @@ async function main() {
       ipToHost,
       allowIps: [...v4, ...v6],
       dns: dnsCap,
+      ebpf: ebpfCap,
       policyFile,
       policyFileRel,
       learn,
@@ -478,21 +627,42 @@ async function post() {
     /* already gone */
   }
   stopDnsCapture(st.dns);
+  stopEbpf(st.ebpf);
 
-  // Tally observed peers as ip|port (IPv4-mapped IPv6 normalized to IPv4).
+  // Tally observed peers as ip|port. Prefer the eBPF connect log (reliable +
+  // process names); fall back to the ss//proc sampler. procMap: ip -> Set(comm).
   const counts = new Map();
-  try {
-    for (const line of fs.readFileSync(st.logFile, "utf8").split("\n")) {
-      const peer = line.trim();
-      if (!peer.includes(":")) continue;
-      const parsed = splitPeer(peer);
-      const ip = normalizeIp(parsed.ip);
-      if (!ip || isLocal(ip)) continue;
-      const key = `${ip}|${parsed.port}`;
-      counts.set(key, (counts.get(key) || 0) + 1);
+  const procMap = new Map();
+  let usedEbpf = false;
+  if (st.ebpf && st.ebpf.active) {
+    try {
+      for (const line of fs.readFileSync(st.ebpf.log, "utf8").split("\n")) {
+        const c = ebpf.parseConnect(line);
+        if (!c) continue;
+        const ip = normalizeIp(c.ip);
+        if (!ip || isLocal(ip)) continue;
+        counts.set(`${ip}|${c.port}`, (counts.get(`${ip}|${c.port}`) || 0) + 1);
+        if (!procMap.has(ip)) procMap.set(ip, new Set());
+        if (c.comm) procMap.get(ip).add(c.comm);
+        usedEbpf = true;
+      }
+    } catch {
+      /* fall back to sampler */
     }
-  } catch {
-    /* no log */
+  }
+  if (!usedEbpf) {
+    try {
+      for (const line of fs.readFileSync(st.logFile, "utf8").split("\n")) {
+        const peer = line.trim();
+        if (!peer.includes(":")) continue;
+        const parsed = splitPeer(peer);
+        const ip = normalizeIp(parsed.ip);
+        if (!ip || isLocal(ip)) continue;
+        counts.set(`${ip}|${parsed.port}`, (counts.get(`${ip}|${parsed.port}`) || 0) + 1);
+      }
+    } catch {
+      /* no log */
+    }
   }
 
   // Resolve hostnames, best source first:
@@ -524,37 +694,48 @@ async function post() {
         host: host || null,
         ips: new Set(),
         ports: new Set(),
+        procs: new Set(),
         conns: 0,
         decision: decisionFor(st, allow, ip),
       };
     g.ips.add(ip);
     if (port) g.ports.add(port);
+    for (const c of procMap.get(ip) || []) g.procs.add(c);
     g.conns += n;
     groups.set(dest, g);
   }
   const rows = [...groups.entries()].sort((a, b) => b[1].conns - a[1].conns);
   const unresolved = rows.filter(([, g]) => !g.host).length;
 
+  const captureLayer = usedEbpf ? "eBPF (tcp_connect)" : "ss//proc sampler";
   const captureMode = st.dns && st.dns.active ? "DNS capture" : "reverse DNS";
   const LOGO =
     "https://raw.githubusercontent.com/OpenSource-For-Freedom/legion_runner/main/assets/logo.jpg";
   let md = `<div align="center"><img src="${LOGO}" alt="Legion" width="120"/></div>\n\n`;
   md += "## 🛡 Legion Harden Runner — outbound connections\n\n";
   md += `**Egress policy:** \`${st.policy}\`${st.enforced ? " (enforced)" : ""}  ·  `;
+  md += `**Capture:** ${captureLayer}  ·  `;
   md += `**Resolution:** ${captureMode}  ·  `;
   md += `**Started:** ${st.startedAt}\n\n`;
 
+  const procCol = usedEbpf; // process attribution only available via eBPF
   if (rows.length === 0) {
     md += "_No outbound connections were observed during this run._\n";
   } else {
-    md += "| Destination | Address | Port(s) | Conns | Decision |\n";
-    md += "|---|---|---|---:|---|\n";
+    md += procCol
+      ? "| Destination | Address | Port(s) | Process | Conns | Decision |\n|---|---|---|---|---:|---|\n"
+      : "| Destination | Address | Port(s) | Conns | Decision |\n|---|---|---|---:|---|\n";
     for (const [dest, g] of rows) {
       const ips = [...g.ips];
       const addr = ips.slice(0, 2).join(", ") + (ips.length > 2 ? `, +${ips.length - 2}` : "");
       const ports = [...g.ports].sort((a, b) => Number(a) - Number(b)).join(", ") || "—";
       const name = g.host ? g.host : `\`${dest}\``;
-      md += `| ${name} | \`${addr}\` | ${ports} | ${g.conns} | ${g.decision} |\n`;
+      if (procCol) {
+        const procs = [...g.procs].slice(0, 3).join(", ") || "—";
+        md += `| ${name} | \`${addr}\` | ${ports} | ${procs} | ${g.conns} | ${g.decision} |\n`;
+      } else {
+        md += `| ${name} | \`${addr}\` | ${ports} | ${g.conns} | ${g.decision} |\n`;
+      }
     }
     md += `\n_${rows.length} unique destination(s) observed._`;
     if (unresolved) {
@@ -563,21 +744,58 @@ async function post() {
         : "had no PTR record — enable `dns-capture` for exact domains";
       md += ` _(${unresolved} ${tip}.)_`;
     }
-    if (st.policy === "block") {
-      md += " _Denied attempts are dropped by the firewall and don't appear here._";
-    }
     md += "\n";
   }
 
-  // Learn → enforce: only when actively learning do we surface/persist the
-  // baseline allowlist (otherwise it just re-lists the table above).
-  if (st.policy !== "block" && st.policyFile && st.learn && rows.length) {
-    const learned = baselineFrom(rows);
-    const merged = [...new Set([...readPolicyFile(st.policyFile), ...learned])].sort();
+  // Blocked attempts: in block mode, surface what the firewall denied (parsed
+  // from the kernel log our LOG rule wrote) instead of dropping silently.
+  if (st.policy === "block") {
+    const denied = readDeniedDestinations();
+    if (denied.length) {
+      md += "\n### ⛔ Blocked attempts\n";
+      md += "| Destination | Address |\n|---|---|\n";
+      for (const peer of denied.slice(0, 50)) {
+        const ip = peer.replace(/:\d+$/, "").replace(/^\[|\]$/g, "");
+        const host = hostMap[ip] || (await reverseLookup(ip)) || "—";
+        md += `| ${host === "—" ? "—" : host} | \`${peer}\` |\n`;
+      }
+      md += `\n_${denied.length} denied destination(s)._\n`;
+    } else {
+      md += "\n_No egress was denied (everything the job reached was allowlisted), ";
+      md += "or kernel-log access was unavailable to enumerate drops._\n";
+    }
+  }
+
+  // Persist the learned baseline to the Actions cache so a later block run can
+  // enforce it with no committed file or extra workflow. Best-effort.
+  //
+  // The baseline is every domain the job *resolved* (the DNS-capture log) plus
+  // any raw-IP destinations — NOT just sampled sockets. Short-lived connections
+  // can slip between samples, but their DNS lookup is always recorded, so this
+  // is the reliable signal of what the job legitimately needs.
+  const observed = [
+    ...new Set([...baselineFrom(rows), ...Object.values(dnsMap)]),
+  ]
+    .filter(Boolean)
+    .sort();
+  if (observed.length) {
+    const prev = await cacheRestoreDomains();
+    const merged = [...new Set([...prev, ...observed])].sort();
+    await cacheSaveDomains(merged);
+    if (cache.available()) {
+      md += `\n_Learned baseline saved to the Actions cache (${merged.length} domains). `;
+      md += "Set `egress-policy: block` to enforce it — no file or extra workflow needed._\n";
+    }
+  }
+
+  // When explicitly learning, also write the committed policy file (for teams
+  // who prefer a reviewable, in-repo allowlist).
+  if (st.policy !== "block" && st.policyFile && st.learn && observed.length) {
+    const merged = [...new Set([...readPolicyFile(st.policyFile), ...observed])].sort();
     try {
       writePolicyFile(st.policyFile, merged);
       md += `\n### Learned egress baseline (${merged.length})\n`;
-      md += `Written to \`${st.policyFileRel}\` — commit it, then set \`egress-policy: block\` to enforce:\n\n`;
+      md += `Also written to \`${st.policyFileRel}\` — commit it for a reviewable allowlist:\n\n`;
       md += "```\n" + merged.join("\n") + "\n```\n";
     } catch (e) {
       md += `\n_Could not write \`${st.policyFileRel}\`: ${e.message}_\n`;
@@ -642,11 +860,25 @@ async function reverseLookup(ip) {
 }
 
 // ── entrypoint: detect main vs post via saved state ─────────────────────────
-(async () => {
-  try {
-    if (process.env.STATE_isPost === "true") await post();
-    else await main();
-  } catch (e) {
-    warn(`Legion Harden Runner error: ${e.stack || e}`);
-  }
-})();
+// Only runs when executed as a script; `require()` (tests) is side-effect free.
+if (require.main === module) {
+  (async () => {
+    try {
+      if (process.env.STATE_isPost === "true") await post();
+      else await main();
+    } catch (e) {
+      warn(`Legion Harden Runner error: ${e.stack || e}`);
+    }
+  })();
+}
+
+// Pure helpers exported for the test suite (action/index.test.js).
+module.exports = {
+  normalizeIp,
+  isLocal,
+  splitPeer,
+  decisionFor,
+  baselineFrom,
+  parseEndpoints,
+  parseDeniedLog,
+};

@@ -1,0 +1,15 @@
+# Member of the agent workspace, but excluded from default-members so only
+# aya-build compiles it (for the BPF target), never the host toolchain.
+[package]
+name = "legionr-bpf-ebpf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+aya-ebpf = { git = "https://github.com/aya-rs/aya", rev = "a0b8d491" }
+legionr-bpf-common = { path = "../legionr-bpf-common" }
+
+[[bin]]
+name = "legionr-bpf-ebpf"
+path = "src/main.rs"

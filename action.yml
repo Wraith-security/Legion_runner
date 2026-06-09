@@ -55,6 +55,13 @@ inputs:
       Requires sudo; falls back to reverse DNS if unavailable.
     required: false
     default: 'true'
+  ebpf:
+    description: >-
+      Use the Rust/aya eBPF agent (legionr-bpf) for socket-layer connection
+      capture with process attribution when present. "auto" (use if available)
+      or "off". Falls back to the ss//proc sampler otherwise.
+    required: false
+    default: 'auto'
   sample-interval:
     description: 'Seconds between egress samples for the monitor.'
     required: false

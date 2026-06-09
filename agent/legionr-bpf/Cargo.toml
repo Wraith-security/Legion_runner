@@ -1,0 +1,18 @@
+[package]
+name = "legionr-bpf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Legion Runner eBPF capture agent — prints outbound connections (socket-layer)"
+
+[[bin]]
+name = "legionr-bpf"
+path = "src/main.rs"
+
+[dependencies]
+aya = { git = "https://github.com/aya-rs/aya", rev = "a0b8d491" }
+anyhow = "1"
+legionr-bpf-common = { path = "../legionr-bpf-common", features = ["user"] }
+
+[build-dependencies]
+aya-build = { git = "https://github.com/aya-rs/aya", rev = "a0b8d491" }

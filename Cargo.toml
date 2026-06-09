@@ -3,6 +3,11 @@ members = [
     "crates/legionr-core",
     "crates/legionr-cli",
 ]
+# The eBPF agent is its own workspace (nightly + bpf-linker); keep it out of the
+# main build so `cargo build --workspace` stays fast and toolchain-light.
+exclude = [
+    "agent",
+]
 resolver = "2"
 
 [workspace.package]

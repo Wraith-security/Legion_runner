@@ -62,8 +62,9 @@ try {
   /* no dns log */
 }
 
-// Observed destinations (domain when known, else IP).
-const dests = new Set();
+// Observed destinations: every domain the job resolved (reliable, even for
+// short-lived connections the socket sampler misses) plus raw-IP peers.
+const dests = new Set(Object.values(hostMap));
 try {
   for (const line of fs.readFileSync(st.logFile, "utf8").split("\n")) {
     const peer = line.trim();
