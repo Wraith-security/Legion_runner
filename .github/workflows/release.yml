@@ -33,24 +33,16 @@ jobs:
     timeout-minutes: 20   # hard cap: never let a hung job run to the 6h default
     steps:
       - uses: actions/checkout@v4
-      - name: Harden runner (Legion, block)
-        # Bootstrap: this release-gating verify uses the in-repo action (./) so it
-        # runs the FIXED teardown — full DNS capture + eBPF, no hang. Once this
-        # release ships, @v1 carries the fix and ci/release flip back to @v1 with
-        # capture on. (dns-capture + ebpf default to on.)
-        uses: ./
+      - name: Harden runner (Legion)
+        uses: OpenSource-For-Freedom/legion_runner@v1   # Marketplace action
         with:
-          egress-policy: block
-          # Daemons off so the release pipeline can't be blocked by the @v1
-          # teardown hang. This release SHIPS the fix; once @v1 carries it,
-          # flip these on (with dns capture + eBPF). Egress block still enforced.
+          # INTERIM: audit (monitor only) so the release pipeline can't be blocked
+          # by the @v1 teardown hang OR by block dropping rotating CDN IPs (crates).
+          # This release SHIPS the teardown fix; flip to block + dns-capture once
+          # @v1 carries it.
+          egress-policy: audit
           ebpf: 'off'
           dns-capture: 'off'
-          allowed-endpoints: |
-            static.rust-lang.org
-            index.crates.io
-            static.crates.io
-            crates.io
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
