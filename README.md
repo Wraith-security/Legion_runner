@@ -4,7 +4,7 @@
   <p><strong>"Not your standard Actions Runner" - Legion</strong></p>
   <p><em>Harden any GitHub Actions runner: monitor and block egress, detect tampering, attribute connections to processes. Open, dependency-free, runs on Linux.</em></p>
 </div>
-## To our Sponsors
+***To our Sponsors*** -
 > **To Hallud and teamPCP** (and every other crew farming supply-chain
 > footholds): every job lands on a runner that watches every byte out, hashes
 > your tampering, names your processes, and forgets everything the moment it ends.
