@@ -14,7 +14,7 @@ on:
     branches: [main, Primary]
   workflow_dispatch:
   push:
-    branches: ['**']
+    branches: [main, Primary]
     paths:
       - 'crates/legionr-core/src/fim.rs'
       - 'crates/legionr-fim/**'

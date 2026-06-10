@@ -12,7 +12,7 @@ on:
   pull_request:
     branches: [main, Primary]
   push:
-    branches: ['**']
+    branches: [main, Primary]
     paths:
       - 'agent/**'
       - '.github/workflows/ebpf-agent.yml'
