@@ -4,10 +4,17 @@ on:
   # PRs are validated via pull_request; push only runs on the protected branches
   # themselves. Previously push: ['**'] AND pull_request both fired on every
   # PR-branch commit, doubling every run. Now each commit runs CI once.
+  #
+  # Docs-only changes (Markdown / LICENSE / docs/) are ignored: they can't break
+  # the build or the action, so CI (and the release it gates) is skipped. The
+  # docs-passthrough workflow reports the same check names green so required
+  # checks stay satisfied and docs PRs remain mergeable.
   push:
     branches: [main]
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE']
   pull_request:
     branches: [main]
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

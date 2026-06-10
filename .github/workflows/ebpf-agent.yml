@@ -6,10 +6,14 @@ name: eBPF agent
 # (it falls back to the ss//proc sampler).
 
 on:
-  # PR gate ONLY (no path filter so it always reports as a required check). No
-  # `push:` trigger — no need to re-run on main after a merge.
+  # PR gate ONLY (no `push:` trigger: no need to re-run on main after a merge).
+  # It is a reliable required status check. Docs-only changes (Markdown / LICENSE
+  # / docs/) are skipped because they can't affect the agent; docs-passthrough.yml
+  # reports this check green for those PRs so the required gate stays satisfied
+  # and they remain mergeable.
   pull_request:
     branches: [main]
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE']
   workflow_dispatch:
 
 concurrency:

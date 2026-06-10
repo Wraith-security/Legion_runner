@@ -1,0 +1,83 @@
+name: Docs passthrough
+
+# Companion to the real CI / self-test workflows, which skip docs-only changes
+# via `paths-ignore`. A required status check that is skipped by a path filter
+# never reports, which blocks the PR forever. This workflow runs on the SAME
+# docs paths those workflows ignore and emits a green check under each of their
+# job names, so docs-only PRs stay mergeable without running any real build,
+# test, firewall, or eBPF work.
+#
+# Each job's `name:` must match the corresponding real job exactly (that string
+# is the status-check context branch protection keys on). Keep these in sync if
+# a real job is renamed. This workflow is intentionally NOT named "CI" so it does
+# not trigger release.yml (which chains off the CI workflow via workflow_run).
+#
+# On a mixed PR (docs + code) both the real workflow and this one run and report
+# the same names; the real (slower) run completes last and wins. This is the
+# pattern GitHub documents for "skipped but required checks".
+
+on:
+  pull_request:
+    branches: [main, Primary]
+    paths: ['**.md', 'docs/**', 'LICENSE']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ── CI (ci.yml) ─────────────────────────────────────────────────────────────
+  rust:
+    name: Rust test & lint
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Docs-only change; skipping ${{ github.job }}."
+  action:
+    name: Action unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Docs-only change; skipping ${{ github.job }}."
+  shellcheck:
+    name: Shell scripts
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Docs-only change; skipping ${{ github.job }}."
+  security:
+    name: Security audit
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Docs-only change; skipping ${{ github.job }}."
+  supply-chain:
+    name: Supply chain (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Docs-only change; skipping ${{ github.job }}."
+
+  # ── Enforce self-test (enforce-selftest.yml) ────────────────────────────────
+  enforce:
+    name: Block allows allowlisted, denies the rest
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Docs-only change; skipping ${{ github.job }}."
+  full-stack:
+    name: Block + dns-capture + eBPF finalizes (no teardown hang)
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Docs-only change; skipping ${{ github.job }}."
+
+  # ── FIM self-test (fim-selftest.yml) ────────────────────────────────────────
+  fim:
+    name: Snapshot → tamper → detect
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Docs-only change; skipping ${{ github.job }}."
+
+  # ── eBPF agent (ebpf-agent.yml) ─────────────────────────────────────────────
+  ebpf:
+    name: Build & test legionr-bpf
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Docs-only change; skipping ${{ github.job }}."

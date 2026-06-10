@@ -7,11 +7,15 @@ name: Enforce self-test
 # exercised separately in ebpf-agent.yml.
 
 on:
-  # PR gate ONLY. Deliberately no `push:` trigger — a self-test does not need to
+  # PR gate ONLY. Deliberately no `push:` trigger: a self-test does not need to
   # re-run on main after a merge (the PR already validated it), and re-running it
-  # on main just spins/wastes minutes. pull_request validates; dispatch is manual.
+  # on main just spins/wastes minutes. Docs-only changes (Markdown / LICENSE /
+  # docs/) are skipped because they can't affect enforcement; docs-passthrough.yml
+  # reports this check green for those PRs so the required gate stays satisfied
+  # and they remain mergeable.
   pull_request:
     branches: [main]
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE']
   workflow_dispatch:
 
 concurrency:
