@@ -19,6 +19,14 @@ inputs:
       endpoints are always allowed when allow-github is true.
     required: false
     default: ''
+  allowed-presets:
+    description: >-
+      Comma/space-separated curated ecosystem allowlists to permit in block mode,
+      so common toolchains "just work" without listing endpoints. Known presets:
+      npm, yarn, pnpm, pip, pypi, cargo, rust, go, maven, gradle, nuget, apt,
+      debian, docker. Example: "cargo, apt".
+    required: false
+    default: ''
   allow-github:
     description: 'Always allow GitHub + Actions endpoints (so the job can still talk to GitHub).'
     required: false

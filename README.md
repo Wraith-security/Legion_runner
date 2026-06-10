@@ -122,7 +122,7 @@ steps:
       allowed-endpoints: |          # used in block mode
         api.nuget.org:443
         registry.npmjs.org:443
-  - uses: actions/checkout@v4
+  - uses: actions/checkout@v6
   - run: ./build.sh
 ```
 
@@ -134,7 +134,7 @@ At the end of the job you get (the **Process** column appears when the eBPF
 agent is active):
 
 > ## 🛡 Legion Runner — outbound connections
-> **Capture:** eBPF (tcp_connect) · **Resolution:** DNS capture
+> **Capture:** eBPF (sys_enter_connect) · **Resolution:** DNS capture
 >
 > | Destination | Address | Port(s) | Process | Conns | Decision |
 > |---|---|---|---|---:|---|
@@ -152,7 +152,7 @@ agent is active):
 | `allowed-endpoints` | `` | `host` / `host:port` entries to permit in block mode. |
 | `allow-github` | `true` | Always allow GitHub + Actions endpoints. |
 | `dns-capture` | `true` | Route the resolver through a local logger to map connections to the **exact domains** the job resolved (more accurate than reverse DNS). Falls back to reverse DNS if unprivileged. |
-| `ebpf` | `auto` | `auto` uses the Rust/aya eBPF agent for socket-layer capture + process attribution (local binary, else best-effort download of the latest release asset); `off` disables it. Falls back to the `ss`/`/proc` sampler. |
+| `ebpf` | `auto` | `auto` uses the Rust/aya eBPF agent for socket-layer capture + process attribution (local binary, else best-effort download of the latest release asset); `off` disables it. Falls back to the `/proc` sampler. |
 | `policy-file` | `.legion/egress-allowed.txt` | Committed allowlist (learn → enforce). |
 | `learn` | `false` | In audit mode, write the observed destinations to `policy-file`. |
 | `file-integrity` | `auto` | Detect file tampering during the job (Rust `legionr-fim` agent): credential/config files, `.git` config + hooks, and checked-out source. `auto` or `off`. |

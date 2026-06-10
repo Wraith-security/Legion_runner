@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20   # hard cap: never let a hung job run to the 6h default
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Harden runner (Legion)
         uses: OpenSource-For-Freedom/legion_runner@v1   # Marketplace action
         with:
@@ -185,8 +185,11 @@ jobs:
           echo "bpf-linker install failed after 3 attempts"; exit 1
       - name: Build agent (release)
         run: cargo build --release
-      - name: Attach binary to the release
-        run: gh release upload "${{ needs.release.outputs.tag }}" target/release/legionr-bpf --clobber
+      - name: Attach binary + checksum to the release
+        run: |
+          cd target/release
+          sha256sum legionr-bpf > legionr-bpf.sha256
+          gh release upload "${{ needs.release.outputs.tag }}" legionr-bpf legionr-bpf.sha256 --clobber
 
   # ── Build the file-integrity agent and attach it to the release ────────────
   # legionr-fim is plain stable Rust (no eBPF toolchain), built from the main
@@ -205,6 +208,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Build legionr-fim (release)
         run: cargo build --release -p legionr-fim
-      - name: Attach binary to the release
-        run: gh release upload "${{ needs.release.outputs.tag }}" target/release/legionr-fim --clobber
+      - name: Attach binary + checksum to the release
+        run: |
+          cd target/release
+          sha256sum legionr-fim > legionr-fim.sha256
+          gh release upload "${{ needs.release.outputs.tag }}" legionr-fim legionr-fim.sha256 --clobber
 

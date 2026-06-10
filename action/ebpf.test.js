@@ -4,7 +4,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { parseConnect } = require("./ebpf.js");
+const { parseConnect, parseSha256, sha256 } = require("./ebpf.js");
 
 test("parseConnect reads ip/port/pid/comm", () => {
   assert.deepEqual(parseConnect("LEGIONC 140.82.114.3 443 1234 curl"), {
@@ -27,4 +27,18 @@ test("parseConnect skips loopback and malformed lines", () => {
   assert.equal(parseConnect("not a legion line"), null);
   assert.equal(parseConnect("LEGIONC 1.2.3.4"), null); // too few fields
   assert.equal(parseConnect(""), null);
+});
+
+test("parseSha256 extracts the digest from sidecar formats", () => {
+  const h = "a".repeat(64);
+  assert.equal(parseSha256(`${h}  legionr-bpf`), h); // sha256sum format
+  assert.equal(parseSha256(`${h}\n`), h); // bare hash
+  assert.equal(parseSha256("ABCDEF" + "0".repeat(58)), "abcdef" + "0".repeat(58)); // lowercased
+  assert.equal(parseSha256("not a hash"), null);
+  assert.equal(parseSha256(""), null);
+});
+
+test("sha256 matches node crypto for a known input", () => {
+  // echo -n "" | sha256sum
+  assert.equal(sha256(Buffer.from("")), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
 });
