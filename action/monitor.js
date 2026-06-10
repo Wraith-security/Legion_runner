@@ -1,33 +1,19 @@
-// Legion Runner — egress + listener sampler (detached background process).
+// Legion Runner — egress sampler (detached background process).
 //
 // Appends the peer address of every established socket to a log file on an
-// interval (egress), plus any listening sockets tagged with a LISTEN prefix
-// (inbound). A CI runner should expose no services, so a non-loopback listener
-// is a strong bind-shell / unexpected-service signal. Prefers `ss`; falls back
-// to decoding /proc/net/tcp{,6} so it works on any Linux with no iproute2
-// dependency. The parent action dedups + classifies + reports.
+// interval, by decoding /proc/net/tcp{,6} directly — a pure file read, no
+// subprocess. (Earlier versions shelled out to `ss`; a blocking `ss` call could
+// wedge mid-syscall and ignore signals, orphaning the process and hanging the
+// runner at teardown. Reading /proc avoids that entirely and needs no iproute2.)
 //
 //   node monitor.js <logFile> <intervalSeconds>
 
 "use strict";
 
-const { execSync } = require("node:child_process");
 const fs = require("node:fs");
 
 const logFile = process.argv[2];
 const intervalMs = (parseInt(process.argv[3], 10) || 3) * 1000;
-
-function viaSS() {
-  try {
-    return execSync("ss -Htun", { stdio: ["ignore", "pipe", "ignore"] })
-      .toString()
-      .split("\n")
-      .map((l) => l.trim().split(/\s+/).pop())
-      .filter(Boolean);
-  } catch {
-    return null;
-  }
-}
 
 // /proc stores addresses as host-byte-order hex (little-endian on x86).
 function hexIpv4(h) {
@@ -45,52 +31,22 @@ function hexIpv6(h) {
   return `[${parts.join(":")}]`;
 }
 
-function viaProc() {
+// Pure: parse one /proc/net/tcp{,6} file body into "ip:port" peer strings for
+// ESTABLISHED sockets (state 01). Exported for the test suite.
+function parseProcNet(data, v6) {
   const out = [];
-  for (const f of ["/proc/net/tcp", "/proc/net/tcp6"]) {
-    let data;
-    try {
-      data = fs.readFileSync(f, "utf8");
-    } catch {
-      continue;
-    }
-    const v6 = f.endsWith("6");
-    for (const line of data.split("\n").slice(1)) {
-      const p = line.trim().split(/\s+/);
-      if (p.length < 4 || p[3] !== "01") continue; // 01 = ESTABLISHED
-      const [rip, rport] = (p[2] || "").split(":");
-      const port = parseInt(rport, 16);
-      if (!rip || !port) continue;
-      out.push(`${v6 ? hexIpv6(rip) : hexIpv4(rip)}:${port}`);
-    }
+  for (const line of (data || "").split("\n").slice(1)) {
+    const p = line.trim().split(/\s+/);
+    if (p.length < 4 || p[3] !== "01") continue; // 01 = ESTABLISHED
+    const [rip, rport] = (p[2] || "").split(":");
+    const port = parseInt(rport, 16);
+    if (!rip || !port) continue;
+    out.push(`${v6 ? hexIpv6(rip) : hexIpv4(rip)}:${port}`);
   }
   return out;
 }
 
-// ── Listener (inbound) sampling ─────────────────────────────────────────────
-// `ss -l` lists only listening sockets; `-p` adds the owning process (best
-// effort — visible for our own user without privilege). Each entry is
-// "<bindAddr:port>\t<comm>"; the parent tags it LISTEN and drops loopback binds.
-function listenersViaSS() {
-  try {
-    return execSync("ss -Hltunp", { stdio: ["ignore", "pipe", "ignore"] })
-      .toString()
-      .split("\n")
-      .map((line) => {
-        const p = line.trim().split(/\s+/);
-        if (p.length < 5) return null;
-        const local = p[4]; // Netid State Recv-Q Send-Q Local Peer [Process]
-        if (!local || !local.includes(":")) return null;
-        const m = line.match(/"([^"]+)"/); // comm from users:(("name",pid=…))
-        return `${local}\t${m ? m[1] : ""}`;
-      })
-      .filter(Boolean);
-  } catch {
-    return null;
-  }
-}
-
-function listenersViaProc() {
+function established() {
   const out = [];
   for (const f of ["/proc/net/tcp", "/proc/net/tcp6"]) {
     let data;
@@ -99,31 +55,24 @@ function listenersViaProc() {
     } catch {
       continue;
     }
-    const v6 = f.endsWith("6");
-    for (const line of data.split("\n").slice(1)) {
-      const p = line.trim().split(/\s+/);
-      if (p.length < 4 || p[3] !== "0A") continue; // 0A = LISTEN
-      const [lip, lport] = (p[1] || "").split(":");
-      const port = parseInt(lport, 16);
-      if (!lip || !port) continue;
-      out.push(`${v6 ? hexIpv6(lip) : hexIpv4(lip)}:${port}\t`); // no comm via /proc
-    }
+    out.push(...parseProcNet(data, f.endsWith("6")));
   }
   return out;
 }
 
 function sample() {
   try {
-    const peers = viaSS() || viaProc();
-    if (peers && peers.length) fs.appendFileSync(logFile, peers.join("\n") + "\n");
-    const listeners = listenersViaSS() || listenersViaProc();
-    if (listeners && listeners.length) {
-      fs.appendFileSync(logFile, listeners.map((l) => "LISTEN\t" + l).join("\n") + "\n");
-    }
+    const peers = established();
+    if (peers.length) fs.appendFileSync(logFile, peers.join("\n") + "\n");
   } catch {
     /* keep sampling regardless */
   }
 }
 
-sample();
-setInterval(sample, intervalMs);
+// Only sample when executed as a script; require() (tests) is side-effect free.
+if (require.main === module) {
+  sample();
+  setInterval(sample, intervalMs);
+}
+
+module.exports = { parseProcNet, hexIpv4, hexIpv6 };

@@ -33,19 +33,16 @@ jobs:
     timeout-minutes: 20   # hard cap: never let a hung job run to the 6h default
     steps:
       - uses: actions/checkout@v4
-      - name: Harden runner (Legion, block)
-        # Bootstrap: this release-gating verify uses the in-repo action (./) so it
-        # runs the FIXED teardown — full DNS capture + eBPF, no hang. Once this
-        # release ships, @v1 carries the fix and ci/release flip back to @v1 with
-        # capture on. (dns-capture + ebpf default to on.)
-        uses: ./
+      - name: Harden runner (Legion)
+        uses: OpenSource-For-Freedom/legion_runner@v1   # Marketplace action
         with:
-          egress-policy: block
-          allowed-endpoints: |
-            static.rust-lang.org
-            index.crates.io
-            static.crates.io
-            crates.io
+          # INTERIM: audit (monitor only) so the release pipeline can't be blocked
+          # by the @v1 teardown hang OR by block dropping rotating CDN IPs (crates).
+          # This release SHIPS the teardown fix; flip to block + dns-capture once
+          # @v1 carries it.
+          egress-policy: audit
+          ebpf: 'off'
+          dns-capture: 'off'
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -144,6 +141,14 @@ jobs:
         run: |
           set -euo pipefail
           major="${{ steps.ver.outputs.major }}"
+          # Forward-only: never let a stale/queued run move the major tag backward
+          # to an older commit. Only advance if the current tag is an ancestor of
+          # this commit (or the tag doesn't exist yet).
+          if git rev-parse -q --verify "refs/tags/${major}" >/dev/null; then
+            if ! git merge-base --is-ancestor "refs/tags/${major}" "$GITHUB_SHA"; then
+              echo "Refusing to move ${major} backward from $(git rev-parse --short ${major}) to ${GITHUB_SHA}"; exit 0
+            fi
+          fi
           git tag -f "$major" "$GITHUB_SHA"
           git push origin -f "refs/tags/${major}"
           echo "Moved ${major} → ${GITHUB_SHA}"
