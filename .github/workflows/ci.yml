@@ -5,9 +5,9 @@ on:
   # themselves. Previously push: ['**'] AND pull_request both fired on every
   # PR-branch commit, doubling every run. Now each commit runs CI once.
   push:
-    branches: [main, Primary]
+    branches: [main]
   pull_request:
-    branches: [main, Primary]
+    branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

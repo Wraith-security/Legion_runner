@@ -10,10 +10,10 @@ on:
   # Validate on PRs (unconditional, so it's a reliable gate); push only on the
   # protected branches. Avoids a second run on every PR-branch commit.
   pull_request:
-    branches: [main, Primary]
+    branches: [main]
   workflow_dispatch:
   push:
-    branches: [main, Primary]
+    branches: [main]
     paths:
       - 'action/**'
       - '.github/workflows/enforce-selftest.yml'
