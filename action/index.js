@@ -480,10 +480,12 @@ async function startDnsCapture(opts = {}) {
 
 /// Kill the DNS forwarder by pid (preferred), then by name as a fallback.
 function killDnsForwarder(pid) {
+  // pid is the (sudo) launcher; signalling it may not reach the root forwarder,
+  // so ALWAYS also pkill by name (no early return). A leaked root forwarder
+  // keeps the hosted runner from finalizing the job ("Complete job" hangs).
   if (pid) {
     try {
       sudo(["kill", String(pid)]);
-      return;
     } catch {
       /* fall through to pkill */
     }

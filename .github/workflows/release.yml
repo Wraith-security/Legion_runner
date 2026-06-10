@@ -37,8 +37,10 @@ jobs:
         uses: OpenSource-For-Freedom/legion_runner@v1   # Marketplace action
         with:
           egress-policy: block
-          ebpf: 'off'   # @v1 leaks its agent on teardown → runner hang; off until
-                        # a release ships the cleanup fix. Egress block still works.
+          # @v1 leaks its eBPF agent AND DNS forwarder on teardown → runner hang.
+          # Off until a release ships the cleanup fix; egress block still enforced.
+          ebpf: 'off'
+          dns-capture: 'off'
           allowed-endpoints: |
             static.rust-lang.org
             index.crates.io
