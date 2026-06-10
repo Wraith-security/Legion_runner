@@ -145,6 +145,16 @@ agent is active):
 > | Destination | Address |
 > |---|---|
 > | telemetry.example.net | `203.0.113.7:443` |
+>
+> ### 🎧 Inbound listeners
+> | Port | Address | Process |
+> |---|---|---|
+> | 4444 | `0.0.0.0` | nc |
+
+Egress is the primary surface, but the sampler also flags **inbound listeners** —
+a CI job exposes no services, so a non-loopback listening socket (e.g. a bind
+shell) is surfaced with its process. Loopback binds (systemd-resolved, the
+DNS-capture forwarder) are ignored.
 
 | Input | Default | Description |
 |-------|---------|-------------|
