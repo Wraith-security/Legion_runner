@@ -2,7 +2,7 @@
   <img src="assets/rust.PNG" alt="Legion Runner" width="420"/>
   <h1>Legion Runner</h1>
   <p><strong>"Not your standard Actions Runner" - Legion</strong></p>
-  <p><em>Harden any GitHub Actions runner: monitor and block egress, detect tampering, attribute connections to processes. Open, dependency-free, runs on Linux.</em></p>
+  <p><em>Harden any GitHub Actions runner: monitor and block egress, detect tampering, attribute connections to processes. Open, dependency-free Action, runs on Linux.</em></p>
   <p>
     <a href="https://github.com/marketplace/actions/legion-harden-runner"><img src="https://img.shields.io/badge/Marketplace-Legion%20Runner-2ea44f?logo=github" alt="GitHub Marketplace"></a>
     <a href="https://github.com/OpenSource-For-Freedom/legion_runner/releases/latest"><img src="https://img.shields.io/badge/release-latest-22c55e?logo=github" alt="Latest release"></a>
@@ -19,9 +19,12 @@
 
 ---
 
-**Legion Runner is a GitHub Action that hardens your CI.** It's an open,
-dependency-free alternative to proprietary runner-hardening agents. Drop it in as
-the first step of any job (including GitHub-hosted runners) and it:
+**Legion Runner is a GitHub Action that hardens your CI.** It's an open
+alternative to proprietary runner-hardening agents, and the Action itself is
+dependency-free — pure Node built-ins, no vendored npm packages. (Its optional
+eBPF capture and file-integrity helpers are single static Rust binaries, fetched
+on demand.) Drop it in as the first step of any job (including GitHub-hosted
+runners) and it:
 
 - **Monitors and optionally blocks outbound network traffic.** Audit every egress
   connection, or default-deny with an allowlist (`block` mode). Dynamic
@@ -56,11 +59,13 @@ to catch tampering, are written in Rust, and that choice buys real safety:
 - **Memory-safe by design.** Rust rules out the bug class (buffer overflows,
   use-after-free) behind most exploits in tools written in C. A guard that can't
   be turned into a way in.
-- **One small, fast binary.** No interpreter or runtime to install, update, or
-  trust, and nothing vendored. It drops onto a runner and just works, with little
-  enough overhead to run on every job.
-- **Auditable.** The privileged logic lives in a compact, compiled binary you can
-  read end to end, which is the whole point when you dared someone to decompile it.
+- **One small, fast binary.** No interpreter or runtime to install or update — it
+  compiles to a single static binary (its Rust/aya dependencies built in, pinned,
+  and audited via `cargo-deny`) that drops onto a runner and just works, with
+  little enough overhead to run on every job.
+- **Auditable.** The privileged logic — the egress and tamper-detection paths —
+  lives in compact, compiled code you can read end to end, which is the whole
+  point when you dared someone to decompile it.
 
 ## Use as a GitHub Action
 
