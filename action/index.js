@@ -722,6 +722,25 @@ async function post() {
   stopDnsCapture(st.dns);
   stopEbpf(st.ebpf);
 
+  // Belt-and-suspenders: force-kill EVERY background daemon we may have spawned,
+  // by name. A single survivor (even the non-privileged ss/proc monitor) blocks
+  // the hosted runner from finalizing the job ("Complete job" hangs). Patterns
+  // are bracketed ([m]onitor.js) so pkill never matches its own command line.
+  // Try unprivileged first (monitor runs as the runner user), then sudo (dnscap
+  // / legionr-bpf run as root). All best-effort.
+  for (const pat of ["[m]onitor.js", "[d]nscap.js", "[l]egionr-bpf"]) {
+    try {
+      execFileSync("pkill", ["-9", "-f", pat], { stdio: "ignore" });
+    } catch {
+      /* not found / pkill absent */
+    }
+    try {
+      sudo(["pkill", "-9", "-f", pat]);
+    } catch {
+      /* no privilege / not found */
+    }
+  }
+
   // Tally observed peers as ip|port. Prefer the eBPF connect log (reliable +
   // process names); fall back to the ss//proc sampler. procMap: ip -> Set(comm).
   const counts = new Map();

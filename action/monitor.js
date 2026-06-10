@@ -19,7 +19,7 @@ const intervalMs = (parseInt(process.argv[3], 10) || 3) * 1000;
 
 function viaSS() {
   try {
-    return execSync("ss -Htun", { stdio: ["ignore", "pipe", "ignore"] })
+    return execSync("ss -Htun", { stdio: ["ignore", "pipe", "ignore"], timeout: 3000 })
       .toString()
       .split("\n")
       .map((l) => l.trim().split(/\s+/).pop())
@@ -73,7 +73,7 @@ function viaProc() {
 // "<bindAddr:port>\t<comm>"; the parent tags it LISTEN and drops loopback binds.
 function listenersViaSS() {
   try {
-    return execSync("ss -Hltunp", { stdio: ["ignore", "pipe", "ignore"] })
+    return execSync("ss -Hltunp", { stdio: ["ignore", "pipe", "ignore"], timeout: 3000 })
       .toString()
       .split("\n")
       .map((line) => {
