@@ -171,6 +171,7 @@ async function resolveAll(hosts) {
   const ipToHost = {};
   const v4 = new Set();
   const v6 = new Set();
+  const unresolved = [];
   for (const h of hosts) {
     try {
       const recs = await dns.lookup(h, { all: true });
@@ -179,8 +180,16 @@ async function resolveAll(hosts) {
         (r.family === 6 ? v6 : v4).add(r.address);
       }
     } catch {
-      warn(`could not resolve ${h} (skipping)`);
+      // Benign and expected for wildcard parents (e.g. blob.core.windows.net,
+      // actions.githubusercontent.com) that have no A record of their own — only
+      // their subdomains resolve. Connections are still observed via PTR /
+      // dns-capture, and block mode opens IPs just-in-time as names resolve. Note
+      // it as plain info, not a ::warning:: annotation (which is just CI noise).
+      unresolved.push(h);
     }
+  }
+  if (unresolved.length) {
+    info(`Allowlist entries with no A/AAAA record at startup (skipped, observed via PTR/dns-capture): ${unresolved.join(", ")}`);
   }
   return { ipToHost, v4: [...v4], v6: [...v6] };
 }
@@ -915,10 +924,10 @@ async function post() {
     for (const [dest, g] of rows) {
       const ips = [...g.ips];
       const addr = ips.slice(0, 2).join(", ") + (ips.length > 2 ? `, +${ips.length - 2}` : "");
-      const ports = [...g.ports].sort((a, b) => Number(a) - Number(b)).join(", ") || "—";
+      const ports = [...g.ports].sort((a, b) => Number(a) - Number(b)).join(", ") || "-";
       const name = g.host ? g.host : `\`${dest}\``;
       if (procCol) {
-        const procs = [...g.procs].slice(0, 3).join(", ") || "—";
+        const procs = [...g.procs].slice(0, 3).join(", ") || "-";
         md += `| ${name} | \`${addr}\` | ${ports} | ${procs} | ${g.conns} | ${g.decision} |\n`;
       } else {
         md += `| ${name} | \`${addr}\` | ${ports} | ${g.conns} | ${g.decision} |\n`;
@@ -943,8 +952,8 @@ async function post() {
       md += "| Destination | Address |\n|---|---|\n";
       for (const peer of denied.slice(0, 50)) {
         const ip = peer.replace(/:\d+$/, "").replace(/^\[|\]$/g, "");
-        const host = hostMap[ip] || (await reverseLookup(ip)) || "—";
-        md += `| ${host === "—" ? "—" : host} | \`${peer}\` |\n`;
+        const host = hostMap[ip] || (await reverseLookup(ip)) || "-";
+        md += `| ${host} | \`${peer}\` |\n`;
       }
       md += `\n_${denied.length} denied destination(s)._\n`;
     } else {
