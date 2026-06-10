@@ -12,12 +12,6 @@ Unreleased section.
 ## [Unreleased]
 
 ### Added
-- **Inbound listener detection**: the sampler now also records listening sockets
-  (`ss -l` / `/proc` fallback) with process attribution. A CI job exposes no
-  services, so any **non-loopback** listener (bind shell / unexpected service) is
-  flagged in the job summary under "Inbound listeners". Loopback binds
-  (systemd-resolved, the DNS-capture forwarder) are ignored. Pure parser
-  unit-tested in CI.
 - **`learned-baseline` input** (default `true`): in block mode, also allow
   destinations previously learned into the Actions cache. Set `false` to enforce
   ONLY the explicit allowlist (inline + policy-file + GitHub) with no cache

@@ -8,8 +8,6 @@ const assert = require("node:assert/strict");
 const {
   normalizeIp,
   isLocal,
-  isLoopback,
-  parseListenerLine,
   splitPeer,
   decisionFor,
   baselineFrom,
@@ -75,36 +73,4 @@ test("parseDeniedLog extracts DST:DPT, dedups, normalizes, ignores noise", () =>
 
 test("parseDeniedLog returns empty for no matches", () => {
   assert.deepEqual(parseDeniedLog("nothing here\nDST=1.1.1.1 DPT=443"), []);
-});
-
-test("isLoopback flags 127.x/::1 only, not wildcard binds", () => {
-  for (const a of ["127.0.0.1", "127.0.0.53", "::1", "[::1]", "127.0.0.1%lo", ""]) {
-    assert.equal(isLoopback(a), true, `${a} should be loopback`);
-  }
-  // wildcard / public binds are NOT loopback — these are the bind-shell signal
-  for (const a of ["0.0.0.0", "::", "*", "10.1.0.4", "192.168.1.5"]) {
-    assert.equal(isLoopback(a), false, `${a} should not be loopback`);
-  }
-});
-
-test("parseListenerLine parses LISTEN lines, ignores everything else", () => {
-  assert.deepEqual(parseListenerLine("LISTEN\t0.0.0.0:4444\tnc"), {
-    addr: "0.0.0.0",
-    port: "4444",
-    proc: "nc",
-  });
-  assert.deepEqual(parseListenerLine("LISTEN\t[::]:8080\t"), {
-    addr: "::",
-    port: "8080",
-    proc: "",
-  });
-  assert.deepEqual(parseListenerLine("LISTEN\t::ffff:0.0.0.0:22\tsshd"), {
-    addr: "0.0.0.0",
-    port: "22",
-    proc: "sshd",
-  });
-  // non-listener / malformed lines
-  assert.equal(parseListenerLine("140.82.112.3:443"), null);
-  assert.equal(parseListenerLine("LISTEN\t\tnoaddr"), null);
-  assert.equal(parseListenerLine(""), null);
 });
