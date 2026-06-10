@@ -45,6 +45,21 @@ steps:
 > above; the self-hosted platform is documented in
 > [Ephemeral self-hosted runner](#ephemeral-self-hosted-runner).
 
+## Why Rust?
+
+A security tool shouldn't itself become the weak link. The parts of Legion Runner
+that do the sensitive work, watching every network connection and hashing files
+to catch tampering, are written in Rust, and that choice buys real safety:
+
+- **Memory-safe by design.** Rust rules out the bug class (buffer overflows,
+  use-after-free) behind most exploits in tools written in C. A guard that can't
+  be turned into a way in.
+- **One small, fast binary.** No interpreter or runtime to install, update, or
+  trust, and nothing vendored. It drops onto a runner and just works, with little
+  enough overhead to run on every job.
+- **Auditable.** The privileged logic lives in a compact, compiled binary you can
+  read end to end, which is the whole point when you dared someone to decompile it.
+
 ## Use as a GitHub Action
 
 The action hardens any job, including GitHub-hosted runners. It monitors (and
