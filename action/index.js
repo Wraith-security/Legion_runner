@@ -491,7 +491,11 @@ function killDnsForwarder(pid) {
     }
   }
   try {
-    sudo(["pkill", "-f", "dnscap.js"]);
+    // Bracket the first char ([d]nscap.js) so the pkill/sudo command line itself
+    // doesn't match the pattern — otherwise pkill races to kill its own sudo
+    // parent and can leave the root forwarder alive, hanging the runner. -9 to
+    // be sure (resolv.conf/nsswitch are restored separately).
+    sudo(["pkill", "-9", "-f", "[d]nscap.js"]);
   } catch {
     /* nothing to kill / pkill absent */
   }
@@ -544,7 +548,9 @@ function stopEbpf(cap) {
     }
   }
   try {
-    sudo(["pkill", "-f", "legionr-bpf"]);
+    // Bracket the first char ([l]egionr-bpf) so pkill doesn't match its own
+    // command line and race-kill its sudo parent, leaving the root agent alive.
+    sudo(["pkill", "-9", "-f", "[l]egionr-bpf"]);
   } catch {
     /* nothing to kill / pkill absent */
   }
