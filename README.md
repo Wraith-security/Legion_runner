@@ -75,13 +75,13 @@ removes the persistence surface entirely:
 ```
             +------------------------- Linux host -------------------------+
             |                                                              |
-  GitHub <--+  legionr (Rust control plane)                               |
+  GitHub <--+  legionr (Rust control plane)                                |
    API      |    provision -> mint JIT cred -> run ONE job -> wipe -> loop |
             |        |                                  |                  |
             |        | hardened systemd unit            | Legion link      |
             |        v (non-root, seccomp, no-new-privs) v (lifecycle)     |
             |   official actions/runner          Legion desktop dashboard  |
-            |   (optionally inside a rootless Podman/Docker sandbox)        |
+            |   (optionally inside a rootless Podman/Docker sandbox)       |
             +--------------------------------------------------------------+
 ```
 
