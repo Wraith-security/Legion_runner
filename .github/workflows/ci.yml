@@ -29,10 +29,12 @@ jobs:
         uses: OpenSource-For-Freedom/legion_runner@v1   # Marketplace action
         with:
           egress-policy: block
-          # ebpf off: the published @v1 leaks its eBPF agent on teardown, which
-          # hangs the runner at "Complete job". Flip back to auto once a release
-          # ships the cleanup fix. Egress block/monitor still works.
+          # ebpf + dns-capture off: the published @v1 leaks both its eBPF agent
+          # and its DNS forwarder on teardown, which hangs the runner at
+          # "Complete job". Flip both back on once a release ships the cleanup
+          # fix. Egress block + the ss//proc monitor still work.
           ebpf: 'off'
+          dns-capture: 'off'
           allowed-endpoints: |
             static.rust-lang.org
             index.crates.io
