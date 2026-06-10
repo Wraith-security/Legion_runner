@@ -7,12 +7,20 @@ name: Enforce self-test
 # exercised separately in ebpf-agent.yml.
 
 on:
+  # Validate on PRs (unconditional, so it's a reliable gate); push only on the
+  # protected branches. Avoids a second run on every PR-branch commit.
+  pull_request:
+    branches: [main, Primary]
   workflow_dispatch:
   push:
-    branches: ['**']
+    branches: [main, Primary]
     paths:
       - 'action/**'
       - '.github/workflows/enforce-selftest.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   enforce:

@@ -1,10 +1,17 @@
 name: CI
 
 on:
+  # PRs are validated via pull_request; push only runs on the protected branches
+  # themselves. Previously push: ['**'] AND pull_request both fired on every
+  # PR-branch commit, doubling every run. Now each commit runs CI once.
   push:
-    branches: ['**']
+    branches: [main, Primary]
   pull_request:
     branches: [main, Primary]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
