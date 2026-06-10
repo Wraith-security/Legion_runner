@@ -31,6 +31,21 @@ function hexIpv6(h) {
   return `[${parts.join(":")}]`;
 }
 
+// Pure: parse one /proc/net/tcp{,6} file body into "ip:port" peer strings for
+// ESTABLISHED sockets (state 01). Exported for the test suite.
+function parseProcNet(data, v6) {
+  const out = [];
+  for (const line of (data || "").split("\n").slice(1)) {
+    const p = line.trim().split(/\s+/);
+    if (p.length < 4 || p[3] !== "01") continue; // 01 = ESTABLISHED
+    const [rip, rport] = (p[2] || "").split(":");
+    const port = parseInt(rport, 16);
+    if (!rip || !port) continue;
+    out.push(`${v6 ? hexIpv6(rip) : hexIpv4(rip)}:${port}`);
+  }
+  return out;
+}
+
 function established() {
   const out = [];
   for (const f of ["/proc/net/tcp", "/proc/net/tcp6"]) {
@@ -40,15 +55,7 @@ function established() {
     } catch {
       continue;
     }
-    const v6 = f.endsWith("6");
-    for (const line of data.split("\n").slice(1)) {
-      const p = line.trim().split(/\s+/);
-      if (p.length < 4 || p[3] !== "01") continue; // 01 = ESTABLISHED
-      const [rip, rport] = (p[2] || "").split(":");
-      const port = parseInt(rport, 16);
-      if (!rip || !port) continue;
-      out.push(`${v6 ? hexIpv6(rip) : hexIpv4(rip)}:${port}`);
-    }
+    out.push(...parseProcNet(data, f.endsWith("6")));
   }
   return out;
 }
@@ -62,5 +69,10 @@ function sample() {
   }
 }
 
-sample();
-setInterval(sample, intervalMs);
+// Only sample when executed as a script; require() (tests) is side-effect free.
+if (require.main === module) {
+  sample();
+  setInterval(sample, intervalMs);
+}
+
+module.exports = { parseProcNet, hexIpv4, hexIpv6 };
