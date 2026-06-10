@@ -32,6 +32,15 @@ Unreleased section.
   if unavailable. Logic lives in `legionr-core::fim` (unit-tested); the binary
   is a release asset like `legionr-bpf`, built + attached by `release.yml`.
 
+### Fixed
+- **Runner no longer hangs at job end.** The post step left two privileged
+  background processes alive — the eBPF agent and the DNS-capture forwarder —
+  because their teardown signalled only the `sudo` launcher (and `pkill`'d a
+  stale name, `bpftrace`). A leaked root process keeps a hosted runner from
+  finalizing the job, so it sat at "Complete job" until the 6-hour timeout. Both
+  are now always `pkill`'d by name (`legionr-bpf`, `dnscap.js`). DNS capture and
+  eBPF capture are otherwise unchanged.
+
 ### Changed
 - **Name more destinations**: route glibc `getaddrinfo` (curl/apt/cargo/git)
   through the DNS-capture forwarder via an `nsswitch.conf` reroute, so hosts
