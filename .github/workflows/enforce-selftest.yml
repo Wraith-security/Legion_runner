@@ -29,7 +29,10 @@ jobs:
           egress-policy: block
           allowed-endpoints: |
             example.com
-          dns-capture: 'false'   # exercise the static-seed enforcement path
+          dns-capture: 'false'        # exercise the static-seed enforcement path
+          learned-baseline: 'false'   # inline allowlist ONLY — ignore the shared
+                                      # Actions-cache baseline so the deny case is
+                                      # deterministic (not polluted by other runs)
 
       - name: Allowlisted host allowed, unlisted host denied
         run: |

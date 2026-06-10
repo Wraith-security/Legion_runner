@@ -20,7 +20,18 @@ jobs:
       - name: Harden runner (Legion)
         uses: OpenSource-For-Freedom/legion_runner@v1
         with:
-          egress-policy: audit
+          egress-policy: block
+          # Default-deny egress. allow-github covers github.com/codeload/objects;
+          # these are the rest of this job's real egress. Subdomains match, so
+          # blob.core.windows.net + actions.githubusercontent.com cover the
+          # regional Actions-cache endpoints and Azure blob the cache rides on.
+          allowed-endpoints: |
+            static.rust-lang.org
+            index.crates.io
+            static.crates.io
+            crates.io
+            actions.githubusercontent.com
+            blob.core.windows.net
           policy-file: .legion/egress-allowed.txt
 
       - name: Install Rust

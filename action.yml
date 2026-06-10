@@ -36,6 +36,14 @@ inputs:
       this run (otherwise the baseline is only printed to the job summary).
     required: false
     default: 'false'
+  learned-baseline:
+    description: >-
+      In block mode, also allow destinations previously learned into the Actions
+      cache (the zero-config learn→enforce baseline). Set to "false" to enforce
+      ONLY the explicit allowlist (inline endpoints + policy-file + GitHub), with
+      no cache read or write.
+    required: false
+    default: 'true'
   disable-sudo:
     description: 'Revoke the runner user''s sudo after setup, to stop later privilege use.'
     required: false

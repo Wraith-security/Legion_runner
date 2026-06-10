@@ -557,6 +557,11 @@ async function main() {
 
   const policyFileRel = input("policy-file", ".legion/egress-allowed.txt");
   const learn = boolInput("learn", false);
+  // Whether block mode also allows the destinations previously learned into the
+  // Actions cache (the zero-config learn→enforce baseline). Off = enforce ONLY
+  // the explicit allowlist (inline + file + GitHub), with no cache read/write —
+  // used by the enforce self-test so its deny case is deterministic.
+  const useLearned = boolInput("learned-baseline", true);
   const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
   const policyFile = policyFileRel ? path.resolve(workspace, policyFileRel) : "";
 
@@ -574,7 +579,7 @@ async function main() {
   // cache is what makes audit→block self-contained: no file or workflow needed.
   const userHosts = parseEndpoints(input("allowed-endpoints", "")).map((e) => e.host);
   const fileHosts = policyFile ? readPolicyFile(policyFile) : [];
-  const cachedHosts = await cacheRestoreDomains();
+  const cachedHosts = useLearned ? await cacheRestoreDomains() : [];
   const hosts = [
     ...new Set([...(allowGithub ? GITHUB_EGRESS : []), ...userHosts, ...fileHosts, ...cachedHosts]),
   ];
@@ -663,6 +668,7 @@ async function main() {
       policyFile,
       policyFileRel,
       learn,
+      useLearned,
       startedAt: new Date().toISOString(),
     }),
   );
@@ -731,6 +737,7 @@ async function post() {
     try {
       for (const line of fs.readFileSync(st.logFile, "utf8").split("\n")) {
         const peer = line.trim();
+        if (peer.startsWith("LISTEN")) continue; // inbound listener, handled separately
         if (!peer.includes(":")) continue;
         const parsed = splitPeer(peer);
         const ip = normalizeIp(parsed.ip);
@@ -843,6 +850,34 @@ async function post() {
     }
   }
 
+  // Inbound listeners: a CI job should expose no services, so any non-loopback
+  // listening socket (sampled by monitor.js) is surfaced — a bind shell or an
+  // unexpected service binding a port is a strong indicator of compromise.
+  const listeners = new Map(); // "addr|port" -> Set(comm)
+  try {
+    for (const line of fs.readFileSync(st.logFile, "utf8").split("\n")) {
+      const L = parseListenerLine(line);
+      if (!L || isLoopback(L.addr)) continue;
+      const key = `${L.addr}|${L.port}`;
+      if (!listeners.has(key)) listeners.set(key, new Set());
+      if (L.proc) listeners.get(key).add(L.proc);
+    }
+  } catch {
+    /* no log */
+  }
+  if (listeners.size) {
+    md += "\n### 🎧 Inbound listeners\n";
+    md += "_A CI job normally exposes no services. Non-loopback listening sockets ";
+    md += "may indicate a bind shell or an unexpected service._\n\n";
+    md += "| Port | Address | Process |\n|---|---|---|\n";
+    for (const [key, procs] of [...listeners.entries()].sort()) {
+      const [addr, port] = key.split("|");
+      const proc = [...procs].slice(0, 3).join(", ") || "—";
+      md += `| ${port} | \`${addr}\` | ${proc} |\n`;
+    }
+    md += `\n_${listeners.size} non-loopback listening socket(s) observed._\n`;
+  }
+
   // File integrity: diff the tamper targets against the job-start baseline (via
   // the Rust legionr-fim agent) and surface anything that changed mid-run.
   if (st.fim && st.fim.bin && st.fim.snap) {
@@ -869,7 +904,9 @@ async function post() {
   ]
     .filter(Boolean)
     .sort();
-  if (observed.length) {
+  // Skip when learned-baseline is off (e.g. the enforce self-test) so the run
+  // neither reads nor writes the shared cache — keeping it fully hermetic.
+  if (observed.length && st.useLearned !== false) {
     const prev = await cacheRestoreDomains();
     const merged = [...new Set([...prev, ...observed])].sort();
     await cacheSaveDomains(merged);
@@ -915,6 +952,28 @@ function isLocal(ip) {
     ip.startsWith("169.254.") ||
     ip.startsWith("fe80")
   );
+}
+
+// True only for loopback binds (127.x / ::1). Unlike isLocal(), a wildcard bind
+// (0.0.0.0 / :: / *) is NOT loopback — that's exactly the bind-shell signature
+// we want to surface, so listener classification uses this, not isLocal().
+function isLoopback(addr) {
+  if (!addr) return true;
+  const a = addr.replace(/^\[|\]$/g, "").replace(/%.*/, "");
+  return a.startsWith("127.") || a === "::1";
+}
+
+// Parse a "LISTEN\t<bindAddr:port>\t<comm>" sampler line into { addr, port,
+// proc }, or null for non-listener lines. Pure (testable).
+function parseListenerLine(line) {
+  if (!line || !line.startsWith("LISTEN\t")) return null;
+  const parts = line.split("\t");
+  const local = (parts[1] || "").trim();
+  const proc = (parts[2] || "").trim();
+  if (!local) return null;
+  const { ip, port } = splitPeer(local);
+  if (!port) return null;
+  return { addr: normalizeIp(ip), port, proc };
 }
 
 function decisionFor(st, allow, ip) {
@@ -967,6 +1026,8 @@ if (require.main === module) {
 module.exports = {
   normalizeIp,
   isLocal,
+  isLoopback,
+  parseListenerLine,
   splitPeer,
   decisionFor,
   baselineFrom,
