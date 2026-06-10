@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/rust.PNG" alt="Legion Runner" width="200"/>
+  <img src="assets/rust.PNG" alt="Legion Runner" width="420"/>
   <h1>Legion Runner</h1>
   <p><em>Hardened ~ rust-core ~ ephemeral ~ single-use GitHub Actions runner / runs with joy on Linux</em></p>
   <p>
