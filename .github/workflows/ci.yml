@@ -25,26 +25,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Harden runner (Legion)
-        uses: OpenSource-For-Freedom/legion_runner@v1
-        with:
-          egress-policy: block
-          # ebpf off until the leaked-agent cleanup fix ships to @v1: the
-          # published action's post step pkills the wrong process name, so the
-          # root agent lingers and the runner hangs at "Complete job".
-          ebpf: 'off'
-          # Default-deny egress. allow-github covers github.com/codeload/objects;
-          # these are the rest of this job's real egress. Subdomains match, so
-          # blob.core.windows.net + actions.githubusercontent.com cover the
-          # regional Actions-cache endpoints and Azure blob the cache rides on.
-          allowed-endpoints: |
-            static.rust-lang.org
-            index.crates.io
-            static.crates.io
-            crates.io
-            actions.githubusercontent.com
-            blob.core.windows.net
-          policy-file: .legion/egress-allowed.txt
+      # NOTE: the Legion Harden Runner action is published to the Marketplace for
+      # consumers; we no longer dogfood it in our own build pipeline. The action
+      # itself is exercised by enforce-selftest / fim-selftest / ebpf-agent.
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

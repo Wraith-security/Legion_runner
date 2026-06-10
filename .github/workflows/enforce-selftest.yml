@@ -26,6 +26,7 @@ jobs:
   enforce:
     name: Block allows allowlisted, denies the rest
     runs-on: ubuntu-latest
+    timeout-minutes: 10   # hard cap so a stuck job can't run to the 6h default
     steps:
       - uses: actions/checkout@v6
 
@@ -38,6 +39,8 @@ jobs:
           allowed-endpoints: |
             example.com
           dns-capture: 'false'        # exercise the static-seed enforcement path
+          ebpf: 'off'                 # this test is about the firewall, not
+                                      # capture — no agent to spawn/clean up
           learned-baseline: 'false'   # inline allowlist ONLY — ignore the shared
                                       # Actions-cache baseline so the deny case is
                                       # deterministic (not polluted by other runs)
