@@ -6,16 +6,10 @@ name: eBPF agent
 # (it falls back to the ss//proc sampler).
 
 on:
-  # Run on every PR to a protected branch (no path filter) so it is a reliable
-  # required status check — a path-filtered required check never reports and can
-  # block the merge forever. Path-filtered push keeps fast branch feedback.
+  # PR gate ONLY (no path filter so it always reports as a required check). No
+  # `push:` trigger — no need to re-run on main after a merge.
   pull_request:
     branches: [main]
-  push:
-    branches: [main]
-    paths:
-      - 'agent/**'
-      - '.github/workflows/ebpf-agent.yml'
   workflow_dispatch:
 
 concurrency:

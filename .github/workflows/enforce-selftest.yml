@@ -7,16 +7,12 @@ name: Enforce self-test
 # exercised separately in ebpf-agent.yml.
 
 on:
-  # Validate on PRs (unconditional, so it's a reliable gate); push only on the
-  # protected branches. Avoids a second run on every PR-branch commit.
+  # PR gate ONLY. Deliberately no `push:` trigger — a self-test does not need to
+  # re-run on main after a merge (the PR already validated it), and re-running it
+  # on main just spins/wastes minutes. pull_request validates; dispatch is manual.
   pull_request:
     branches: [main]
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'action/**'
-      - '.github/workflows/enforce-selftest.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -58,3 +54,34 @@ jobs:
             echo "FAIL — allow/deny did not match expectations."
             exit 1
           fi
+
+  # Reliability gate: run the FULL block path — firewall + DNS-capture forwarder
+  # (dynamic allow-by-domain) + eBPF agent + the firewall/daemon teardown — and
+  # prove the job FINALIZES. If any daemon leaks or the firewall isn't torn down,
+  # the runner hangs at teardown and this job hits the timeout and fails. This is
+  # the guard for the whole class of teardown-hang bugs.
+  full-stack:
+    name: Block + dns-capture + eBPF finalizes (no teardown hang)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Harden (block) with all daemons on
+        uses: ./
+        with:
+          egress-policy: block
+          allowed-presets: cargo        # exercise the curated-preset allowlist path
+          allowed-endpoints: |
+            example.com
+          dns-capture: 'true'           # DNS forwarder + dynamic allow + its teardown
+          ebpf: 'auto'                  # agent path (fail-closed download → /proc)
+          learned-baseline: 'false'
+
+      - name: Allowlisted host reachable via dynamic allow-by-domain
+        run: |
+          set -e
+          curl -sS --max-time 25 -o /dev/null https://example.com
+          echo "example.com reachable under block + dns-capture — dynamic allow works."
+          # The decisive assertion is implicit: the post step tears down the
+          # firewall + every daemon; if it doesn't, this job times out.

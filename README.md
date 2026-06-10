@@ -1,7 +1,7 @@
 <div align="center">
   <img src="assets/rust.PNG" alt="Legion Runner" width="420"/>
   <h1>Legion Runner</h1>
-  <p><em>Hardened ~ rust-core ~ ephemeral ~ single-use GitHub Actions runner / runs with joy on Linux</em></p>
+  <p><em>Harden any GitHub Actions runner — monitor &amp; block egress, detect tampering, attribute connections to processes. Open, dependency-free, runs with joy on Linux.</em></p>
   <p>
     <a href="https://github.com/marketplace/actions/legion-harden-runner"><img src="https://img.shields.io/badge/Marketplace-Legion%20Runner-2ea44f?logo=github" alt="GitHub Marketplace"></a>
     <a href="https://github.com/OpenSource-For-Freedom/legion_runner/releases/latest"><img src="https://img.shields.io/badge/release-latest-22c55e?logo=github" alt="Latest release"></a>
@@ -9,21 +9,42 @@
   </p>
 </div>
 
-A **hardened, Rust core, ephemeral, single-use GitHub Actions runner** for Linux : built to
-run with joy, and to forget everything the moment a job ends.
+**Legion Runner is a GitHub Action that hardens your CI** — an open,
+dependency-free alternative to proprietary runner-hardening agents. Drop it in as
+the first step of any job (including GitHub-hosted runners) and it:
 
-Legion Runner is the CI sibling of [Legion](https://github.com/OpenSource-For-Freedom/legion),
-the agentic local security monitor. Where Legion watches your machine, Legion
-Runner gives you self-hosted CI you can actually trust: every job lands on a
-*fresh* runner that accepts exactly **one** job and then self-destructs. No
-credentials, caches, workspace, or implanted tooling survive between jobs — the
-strongest practical defense against poisoned-pipeline persistence.
+- **Monitors and optionally blocks outbound network traffic** — audit every
+  egress connection, or default-deny with an allowlist (`block` mode), with
+  **dynamic allow-by-domain** so rotating CDN/cloud IPs keep working.
+- **Detects file tampering** — snapshots credential/config files, `.git` hooks,
+  and checked-out source at job start and flags anything overwritten mid-run.
+- **Attributes connections to processes** via a socket-layer eBPF agent
+  (bypass-proof), and prints every outbound connection as a table in the job
+  summary.
 
-A Rust control plane mints just-in-time runner credentials and supervises the
-lifecycle; a Bash + systemd backbone locks the host down; and an optional
-**Legion link** heartbeats every runner's lifecycle to the Legion desktop
-dashboard, so a fleet of cloud containers shows up alongside your host
-telemetry in one place.
+```yaml
+steps:
+  - uses: OpenSource-For-Freedom/legion_runner@v1   # first step
+    with:
+      egress-policy: block
+      allowed-presets: cargo        # curated per-ecosystem allowlists
+  - uses: actions/checkout@v6
+  - run: ./build.sh
+```
+
+→ [**Jump to the Action docs**](#use-as-a-github-action).
+
+<details>
+<summary><strong>Also in this repo: an ephemeral self-hosted runner</strong> (a companion control plane)</summary>
+
+A Rust control plane (`legionr`) mints just-in-time runner credentials and runs
+**single-use** runners — every job lands on a *fresh* runner that accepts exactly
+one job and then self-destructs, so no credentials, caches, or implanted tooling
+survive between jobs. A Bash + systemd backbone locks the host down. This is a
+separate, optional product; the sections below (Quick start / CLI / Architecture)
+document it. If you only want to harden GitHub-hosted runners, you just need the
+Action above.
+</details>
 
 ## Why ephemeral + single-use
 
@@ -122,7 +143,7 @@ steps:
       allowed-endpoints: |          # used in block mode
         api.nuget.org:443
         registry.npmjs.org:443
-  - uses: actions/checkout@v4
+  - uses: actions/checkout@v6
   - run: ./build.sh
 ```
 
@@ -134,7 +155,7 @@ At the end of the job you get (the **Process** column appears when the eBPF
 agent is active):
 
 > ## 🛡 Legion Runner — outbound connections
-> **Capture:** eBPF (tcp_connect) · **Resolution:** DNS capture
+> **Capture:** eBPF (sys_enter_connect) · **Resolution:** DNS capture
 >
 > | Destination | Address | Port(s) | Process | Conns | Decision |
 > |---|---|---|---|---:|---|
@@ -152,7 +173,7 @@ agent is active):
 | `allowed-endpoints` | `` | `host` / `host:port` entries to permit in block mode. |
 | `allow-github` | `true` | Always allow GitHub + Actions endpoints. |
 | `dns-capture` | `true` | Route the resolver through a local logger to map connections to the **exact domains** the job resolved (more accurate than reverse DNS). Falls back to reverse DNS if unprivileged. |
-| `ebpf` | `auto` | `auto` uses the Rust/aya eBPF agent for socket-layer capture + process attribution (local binary, else best-effort download of the latest release asset); `off` disables it. Falls back to the `ss`/`/proc` sampler. |
+| `ebpf` | `auto` | `auto` uses the Rust/aya eBPF agent for socket-layer capture + process attribution (local binary, else best-effort download of the latest release asset); `off` disables it. Falls back to the `/proc` sampler. |
 | `policy-file` | `.legion/egress-allowed.txt` | Committed allowlist (learn → enforce). |
 | `learn` | `false` | In audit mode, write the observed destinations to `policy-file`. |
 | `file-integrity` | `auto` | Detect file tampering during the job (Rust `legionr-fim` agent): credential/config files, `.git` config + hooks, and checked-out source. `auto` or `off`. |

@@ -7,22 +7,11 @@ name: FIM self-test
 # — this is the compatibility gate for Dependabot PRs.
 
 on:
-  # Run on every PR to a protected branch (no path filter) so it is a reliable
-  # required status check — a path-filtered required check never reports and can
-  # block the merge forever. Path-filtered push keeps fast branch feedback.
+  # PR gate ONLY (no path filter so it always reports as a required check). No
+  # `push:` trigger — no need to re-run on main after a merge.
   pull_request:
     branches: [main, Primary]
   workflow_dispatch:
-  push:
-    branches: [main, Primary]
-    paths:
-      - 'crates/legionr-core/src/fim.rs'
-      - 'crates/legionr-fim/**'
-      - 'crates/legionr-core/Cargo.toml'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'action/fim.js'
-      - '.github/workflows/fim-selftest.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

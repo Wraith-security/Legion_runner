@@ -18,10 +18,29 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const crypto = require("node:crypto");
 const { execFileSync } = require("node:child_process");
 
 const RELEASE_BIN =
   "https://github.com/OpenSource-For-Freedom/legion_runner/releases/latest/download/legionr-fim";
+
+const sha256 = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
+// Extract the 64-hex digest from a `sha256sum` sidecar or bare hash. Pure (tested).
+function parseSha256(text) {
+  const m = (text || "").trim().match(/\b([a-fA-F0-9]{64})\b/);
+  return m ? m[1].toLowerCase() : null;
+}
+// Verify a download against the `<url>.sha256` sidecar; fail closed.
+async function verifyAgainstSidecar(url, buf) {
+  try {
+    const res = await fetch(url + ".sha256", { redirect: "follow" });
+    if (!res.ok) return false;
+    const expected = parseSha256(await res.text());
+    return !!expected && sha256(buf) === expected;
+  } catch {
+    return false;
+  }
+}
 
 // Locate the Rust binary: explicit env, then PATH, then alongside the action.
 function binPath() {
@@ -53,6 +72,8 @@ async function ensureBinary() {
     if (!res.ok) return null;
     const buf = Buffer.from(await res.arrayBuffer());
     if (buf.length < 1024) return null; // not a real binary (e.g. 404 page)
+    // Fail closed on missing/mismatched checksum — we run this binary directly.
+    if (!(await verifyAgainstSidecar(RELEASE_BIN, buf))) return null;
     const dest = path.join(os.tmpdir(), "legionr-fim");
     fs.writeFileSync(dest, buf, { mode: 0o755 });
     return dest;
@@ -134,4 +155,6 @@ module.exports = {
   severityFor,
   sevIcon,
   renderChanges,
+  parseSha256,
+  sha256,
 };

@@ -35,6 +35,41 @@ const GITHUB_EGRESS = [
   "pipelines.actions.githubusercontent.com",
 ];
 
+// Curated per-ecosystem egress allowlists so block mode "just works" for common
+// toolchains without hand-listing endpoints. Opt in via `allowed-presets`.
+const ECOSYSTEM_PRESETS = {
+  npm: ["registry.npmjs.org"],
+  yarn: ["registry.yarnpkg.com", "registry.npmjs.org"],
+  pnpm: ["registry.npmjs.org"],
+  pip: ["pypi.org", "files.pythonhosted.org"],
+  pypi: ["pypi.org", "files.pythonhosted.org"],
+  cargo: ["crates.io", "static.crates.io", "index.crates.io", "static.rust-lang.org"],
+  rust: ["crates.io", "static.crates.io", "index.crates.io", "static.rust-lang.org", "sh.rustup.rs"],
+  go: ["proxy.golang.org", "sum.golang.org", "storage.googleapis.com"],
+  maven: ["repo.maven.apache.org", "repo1.maven.org"],
+  gradle: ["services.gradle.org", "plugins.gradle.org", "repo.maven.apache.org", "repo1.maven.org"],
+  nuget: ["api.nuget.org", "www.nuget.org"],
+  apt: ["azure.archive.ubuntu.com", "archive.ubuntu.com", "security.ubuntu.com", "esm.ubuntu.com", "ppa.launchpadcontent.net"],
+  debian: ["deb.debian.org", "security.debian.org"],
+  docker: ["registry-1.docker.io", "auth.docker.io", "index.docker.io", "production.cloudflare.docker.com"],
+};
+
+/// Expand a comma/space-separated list of ecosystem preset names into hosts.
+/// Unknown names are returned separately so the caller can warn. Pure (tested).
+function expandPresets(raw, presets = ECOSYSTEM_PRESETS) {
+  const names = (raw || "")
+    .split(/[\s,]+/)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  const hosts = new Set();
+  const unknown = [];
+  for (const n of names) {
+    if (presets[n]) presets[n].forEach((h) => hosts.add(h));
+    else if (!unknown.includes(n)) unknown.push(n);
+  }
+  return { hosts: [...hosts], unknown };
+}
+
 const STATE_FILE = path.join(os.tmpdir(), "legion-harden-state.json");
 const FIM_SNAP_FILE = path.join(os.tmpdir(), "legion-fim-before.json");
 
@@ -227,7 +262,7 @@ async function cacheSaveDomains(domains) {
 // ── eBPF capture (preferred) ────────────────────────────────────────────────
 // Socket-layer connection capture that can't be bypassed by nss-resolve. Writes
 // "LEGIONC ip port pid comm" lines to its log. Falls back silently when eBPF is
-// unavailable (the ss//proc sampler still runs).
+// unavailable (the /proc sampler still runs).
 function startEbpf(connectLog, bin) {
   const out = { active: false, log: connectLog };
   try {
@@ -241,9 +276,9 @@ function startEbpf(connectLog, bin) {
     out.pid = child.pid;
     child.unref();
     out.active = true;
-    info("   eBPF capture active (legionr-bpf: kprobe tcp_connect — socket-layer, bypass-proof)");
+    info("   eBPF capture active (legionr-bpf: tracepoint sys_enter_connect — socket-layer, bypass-proof)");
   } catch (e) {
-    warn(`eBPF capture unavailable (${e.message}); using the ss//proc sampler`);
+    warn(`eBPF capture unavailable (${e.message}); using the /proc sampler`);
   }
   return out;
 }
@@ -263,36 +298,75 @@ function startMonitor(logFile, intervalSec) {
 }
 
 // ── Block-mode firewall (iptables + ip6tables) ──────────────────────────────
+const EGRESS_CHAIN = "LEGION_EGRESS";
+
+/// Pure: the ordered rules appended to the LEGION_EGRESS chain for one address
+/// family — loopback, established, DNS, each allowlisted IP, a rate-limited LOG,
+/// then the terminal default-deny DROP. Order matters; unit-tested.
+function egressBlockRules(ips) {
+  return [
+    ["-A", EGRESS_CHAIN, "-o", "lo", "-j", "ACCEPT"],
+    ["-A", EGRESS_CHAIN, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
+    ["-A", EGRESS_CHAIN, "-p", "udp", "--dport", "53", "-j", "ACCEPT"],
+    ["-A", EGRESS_CHAIN, "-p", "tcp", "--dport", "53", "-j", "ACCEPT"],
+    ...ips.map((ip) => ["-A", EGRESS_CHAIN, "-d", ip, "-j", "ACCEPT"]),
+    ["-A", EGRESS_CHAIN, "-m", "limit", "--limit", "60/min", "--limit-burst", "20",
+      "-j", "LOG", "--log-prefix", "LEGION-DENY ", "--log-level", "4"],
+    ["-A", EGRESS_CHAIN, "-j", "DROP"],
+  ];
+}
+
+/// Pure: the teardown commands — the OUTPUT jump MUST be removed first (that is
+/// what restores the runner's egress), then flush, then delete the chain.
+function egressUnblockRules() {
+  return [
+    ["-D", "OUTPUT", "-j", EGRESS_CHAIN],
+    ["-F", EGRESS_CHAIN],
+    ["-X", EGRESS_CHAIN],
+  ];
+}
+
 function applyEgressBlock(ipv4, ipv6) {
-  const CHAIN = "LEGION_EGRESS";
   for (const [bin, ips] of [
     ["iptables", ipv4],
     ["ip6tables", ipv6],
   ]) {
     try {
-      sudo([bin, "-N", CHAIN]);
+      sudo([bin, "-N", EGRESS_CHAIN]);
     } catch {
-      sudo([bin, "-F", CHAIN]);
+      sudo([bin, "-F", EGRESS_CHAIN]);
     }
     try {
-      sudo([bin, "-C", "OUTPUT", "-j", CHAIN]);
+      sudo([bin, "-C", "OUTPUT", "-j", EGRESS_CHAIN]);
     } catch {
-      sudo([bin, "-A", "OUTPUT", "-j", CHAIN]);
+      sudo([bin, "-A", "OUTPUT", "-j", EGRESS_CHAIN]);
     }
-    sudo([bin, "-A", CHAIN, "-o", "lo", "-j", "ACCEPT"]);
-    sudo([bin, "-A", CHAIN, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"]);
-    sudo([bin, "-A", CHAIN, "-p", "udp", "--dport", "53", "-j", "ACCEPT"]);
-    sudo([bin, "-A", CHAIN, "-p", "tcp", "--dport", "53", "-j", "ACCEPT"]);
-    for (const ip of ips) sudo([bin, "-A", CHAIN, "-d", ip, "-j", "ACCEPT"]);
-    // Log denied packets (rate-limited) before dropping, so post() can surface
-    // exactly what was blocked instead of dropping silently.
-    try {
-      sudo([bin, "-A", CHAIN, "-m", "limit", "--limit", "60/min", "--limit-burst", "20",
-        "-j", "LOG", "--log-prefix", "LEGION-DENY ", "--log-level", "4"]);
-    } catch {
-      /* LOG target unavailable — enforcement still works, just no deny list */
+    for (const rule of egressBlockRules(ips)) {
+      try {
+        sudo([bin, ...rule]);
+      } catch (e) {
+        // The LOG target may be unavailable on some kernels; tolerate just that.
+        // Every other rule (incl. the terminal DROP) must apply.
+        if (!rule.includes("LOG")) throw e;
+      }
     }
-    sudo([bin, "-A", CHAIN, "-j", "DROP"]); // default-deny
+  }
+}
+
+/// Remove the block-mode firewall so the runner's own teardown egress (it must
+/// reach GitHub to report job completion / upload logs) isn't dropped. Leaving
+/// LEGION_EGRESS in OUTPUT past the job hangs the runner at finalization — the
+/// rotating GitHub-backend IPs aren't in the static seed. Best-effort, both
+/// families. Removing the OUTPUT jump first is what restores normal egress.
+function removeEgressBlock() {
+  for (const bin of ["iptables", "ip6tables"]) {
+    for (const cmd of egressUnblockRules()) {
+      try {
+        sudo([bin, ...cmd]);
+      } catch {
+        /* already gone / chain absent — best-effort */
+      }
+    }
   }
 }
 
@@ -590,13 +664,26 @@ async function main() {
   const userHosts = parseEndpoints(input("allowed-endpoints", "")).map((e) => e.host);
   const fileHosts = policyFile ? readPolicyFile(policyFile) : [];
   const cachedHosts = useLearned ? await cacheRestoreDomains() : [];
+  const { hosts: presetHosts, unknown: unknownPresets } = expandPresets(input("allowed-presets", ""));
+  if (unknownPresets.length) {
+    warn(
+      `unknown egress preset(s): ${unknownPresets.join(", ")} ` +
+        `(known: ${Object.keys(ECOSYSTEM_PRESETS).join(", ")})`,
+    );
+  }
   const hosts = [
-    ...new Set([...(allowGithub ? GITHUB_EGRESS : []), ...userHosts, ...fileHosts, ...cachedHosts]),
+    ...new Set([
+      ...(allowGithub ? GITHUB_EGRESS : []),
+      ...presetHosts,
+      ...userHosts,
+      ...fileHosts,
+      ...cachedHosts,
+    ]),
   ];
   if (block) {
     info(
       `   allowlist: ${hosts.length} host(s) ` +
-        `(${userHosts.length} inline, ${fileHosts.length} file, ${cachedHosts.length} learned)`,
+        `(${userHosts.length} inline, ${presetHosts.length} preset, ${fileHosts.length} file, ${cachedHosts.length} learned)`,
     );
   }
   const { ipToHost, v4, v6 } = await resolveAll(hosts);
@@ -606,7 +693,7 @@ async function main() {
   const pid = startMonitor(logFile, interval);
 
   // Preferred capture: eBPF (socket-layer, bypass-proof, with process names).
-  // The ss//proc sampler above stays as a fallback when eBPF is unavailable.
+  // The /proc sampler above stays as a fallback when eBPF is unavailable.
   let ebpfCap = { active: false, log: "" };
   if (input("ebpf", "auto").toLowerCase() !== "off") {
     const bin = await ebpf.ensureBinary(); // local, else best-effort download
@@ -724,8 +811,13 @@ async function post() {
   stopDnsCapture(st.dns);
   stopEbpf(st.ebpf);
 
+  // Remove the block-mode firewall NOW, before the runner finalizes — otherwise
+  // its default-deny drops the runner's own completion call and the job hangs.
+  // The denied list below reads the kernel log, which persists past chain removal.
+  if (st.enforced) removeEgressBlock();
+
   // Tally observed peers as ip|port. Prefer the eBPF connect log (reliable +
-  // process names); fall back to the ss//proc sampler. procMap: ip -> Set(comm).
+  // process names); fall back to the /proc sampler. procMap: ip -> Set(comm).
   const counts = new Map();
   const procMap = new Map();
   let usedEbpf = false;
@@ -802,7 +894,7 @@ async function post() {
   const rows = [...groups.entries()].sort((a, b) => b[1].conns - a[1].conns);
   const unresolved = rows.filter(([, g]) => !g.host).length;
 
-  const captureLayer = usedEbpf ? "eBPF (tcp_connect)" : "ss//proc sampler";
+  const captureLayer = usedEbpf ? "eBPF (sys_enter_connect)" : "/proc sampler";
   const captureMode = st.dns && st.dns.active ? "DNS capture" : "reverse DNS";
   const LOGO =
     "https://raw.githubusercontent.com/OpenSource-For-Freedom/legion_runner/main/assets/logo.jpg";
@@ -992,4 +1084,8 @@ module.exports = {
   baselineFrom,
   parseEndpoints,
   parseDeniedLog,
+  expandPresets,
+  ECOSYSTEM_PRESETS,
+  egressBlockRules,
+  egressUnblockRules,
 };

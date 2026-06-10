@@ -13,6 +13,10 @@ const {
   baselineFrom,
   parseEndpoints,
   parseDeniedLog,
+  expandPresets,
+  ECOSYSTEM_PRESETS,
+  egressBlockRules,
+  egressUnblockRules,
 } = require("./index.js");
 
 test("normalizeIp maps IPv4-mapped IPv6 to plain IPv4", () => {
@@ -73,4 +77,49 @@ test("parseDeniedLog extracts DST:DPT, dedups, normalizes, ignores noise", () =>
 
 test("parseDeniedLog returns empty for no matches", () => {
   assert.deepEqual(parseDeniedLog("nothing here\nDST=1.1.1.1 DPT=443"), []);
+});
+
+test("expandPresets unions known ecosystems, dedups, reports unknown", () => {
+  const r = expandPresets("cargo, apt");
+  assert.ok(r.hosts.includes("crates.io"));
+  assert.ok(r.hosts.includes("static.crates.io"));
+  assert.ok(r.hosts.includes("security.ubuntu.com"));
+  assert.deepEqual(r.unknown, []);
+  // case-insensitive + comma/space mix + dedup of overlapping presets
+  const y = expandPresets("NPM yarn");
+  assert.equal(y.hosts.filter((h) => h === "registry.npmjs.org").length, 1);
+  // unknown names surface (deduped), empty input is empty
+  assert.deepEqual(expandPresets("bogus, bogus, npm").unknown, ["bogus"]);
+  assert.deepEqual(expandPresets(""), { hosts: [], unknown: [] });
+});
+
+test("every preset lists at least one host, all lowercase", () => {
+  for (const [name, hosts] of Object.entries(ECOSYSTEM_PRESETS)) {
+    assert.ok(hosts.length > 0, `${name} must list hosts`);
+    assert.equal(name, name.toLowerCase(), `${name} key must be lowercase`);
+  }
+});
+
+test("egressBlockRules: lo+established+dns first, allowed IPs, DROP last", () => {
+  const rules = egressBlockRules(["1.2.3.4", "5.6.7.8"]);
+  // terminal rule is the default-deny DROP
+  assert.deepEqual(rules[rules.length - 1], ["-A", "LEGION_EGRESS", "-j", "DROP"]);
+  // loopback accepted first
+  assert.deepEqual(rules[0], ["-A", "LEGION_EGRESS", "-o", "lo", "-j", "ACCEPT"]);
+  // each allowlisted IP gets an ACCEPT before the DROP
+  assert.ok(rules.some((r) => r.includes("-d") && r.includes("1.2.3.4")));
+  assert.ok(rules.some((r) => r.includes("-d") && r.includes("5.6.7.8")));
+  // DNS is allowed (else the firewall would break resolution)
+  assert.ok(rules.some((r) => r.includes("udp") && r.includes("53")));
+  // the LOG rule sits immediately before DROP
+  const logIdx = rules.findIndex((r) => r.includes("LOG"));
+  assert.equal(logIdx, rules.length - 2);
+});
+
+test("egressUnblockRules removes the OUTPUT jump FIRST (restores egress)", () => {
+  const cmds = egressUnblockRules();
+  assert.deepEqual(cmds[0], ["-D", "OUTPUT", "-j", "LEGION_EGRESS"]);
+  // then flush, then delete the chain
+  assert.deepEqual(cmds[1], ["-F", "LEGION_EGRESS"]);
+  assert.deepEqual(cmds[2], ["-X", "LEGION_EGRESS"]);
 });
