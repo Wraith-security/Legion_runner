@@ -528,21 +528,23 @@ function stopDnsCapture(dns) {
   }
 }
 
-/// Stop the eBPF (bpftrace) capture; best-effort.
+/// Stop the eBPF capture agent; best-effort. The agent runs as root (via sudo),
+/// so signalling the launcher pid may not reach the real process — ALWAYS also
+/// pkill it by name (the binary is `legionr-bpf`, not bpftrace). A leaked root
+/// agent keeps the hosted runner from finalizing the job ("Complete job" hangs).
 function stopEbpf(cap) {
   if (!cap || !cap.active) return;
   if (cap.pid) {
     try {
       sudo(["kill", String(cap.pid)]);
-      return;
     } catch {
-      /* fall through */
+      /* fall through to pkill */
     }
   }
   try {
-    sudo(["pkill", "-f", "bpftrace"]);
+    sudo(["pkill", "-f", "legionr-bpf"]);
   } catch {
-    /* nothing to kill */
+    /* nothing to kill / pkill absent */
   }
 }
 

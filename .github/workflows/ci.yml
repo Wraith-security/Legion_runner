@@ -21,6 +21,7 @@ jobs:
   rust:
     name: Rust test & lint
     runs-on: ubuntu-latest
+    timeout-minutes: 20   # hard cap: never let a hung job run to the 6h default
     steps:
       - uses: actions/checkout@v6
 
@@ -28,6 +29,10 @@ jobs:
         uses: OpenSource-For-Freedom/legion_runner@v1
         with:
           egress-policy: block
+          # ebpf off until the leaked-agent cleanup fix ships to @v1: the
+          # published action's post step pkills the wrong process name, so the
+          # root agent lingers and the runner hangs at "Complete job".
+          ebpf: 'off'
           # Default-deny egress. allow-github covers github.com/codeload/objects;
           # these are the rest of this job's real egress. Subdomains match, so
           # blob.core.windows.net + actions.githubusercontent.com cover the

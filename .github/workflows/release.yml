@@ -30,12 +30,17 @@ jobs:
   verify:
     name: Verify
     runs-on: ubuntu-latest
+    timeout-minutes: 20   # hard cap: never let a hung job run to the 6h default
     steps:
       - uses: actions/checkout@v4
       - name: Harden runner (Legion, block)
         uses: OpenSource-For-Freedom/legion_runner@v1
         with:
           egress-policy: block
+          # ebpf off until the leaked-agent cleanup fix ships to @v1 (the
+          # published post step pkills the wrong name → root agent lingers →
+          # runner hangs at "Complete job").
+          ebpf: 'off'
           # Default-deny egress. allow-github covers GitHub's endpoints; these
           # are the toolchain + registry this verify job reaches. No actions/cache
           # step here, so no Azure-blob endpoint needed (unlike ci.yml's rust job).
