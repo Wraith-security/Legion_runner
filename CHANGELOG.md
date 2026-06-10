@@ -45,6 +45,12 @@ Unreleased section.
   processes alive — eBPF agent, DNS forwarder — and the `/proc` monitor could
   wedge in a blocking `ss` subprocess. The monitor now reads `/proc/net/tcp`
   directly (no subprocess); daemons are reliably reaped.
+- **No more spurious "could not resolve" annotations.** Allowlist entries that
+  are wildcard parents with no A record of their own (e.g. `blob.core.windows.net`,
+  `actions.githubusercontent.com`) used to emit one CI **warning annotation**
+  each on every run. They are benign: the action skips them, and their subdomains
+  are still observed via PTR / DNS capture (and opened just-in-time in block
+  mode). They are now collected into a single plain-text log line instead.
 - **Docs/labels**: the eBPF mechanism is a **tracepoint on `sys_enter_connect`**
   (not a "kprobe on tcp_connect"); the sampler is `/proc`-only (the "ss" fallback
   was removed). Corrected the runtime log line, summary label, and README.
@@ -58,6 +64,8 @@ Unreleased section.
   job finalizes (catches any teardown-hang regression). Action test count 19 → 30.
 
 ### Changed
+- Removed em-dashes from the job-summary output (headers, the unresolved-host
+  note, the enforce hint, and empty-cell placeholders) for plainer rendering.
 - **Name more destinations**: route glibc `getaddrinfo` (curl/apt/cargo/git)
   through the DNS-capture forwarder via an `nsswitch.conf` reroute, so hosts
   resolved by systemd-resolved (which ignores `resolv.conf`) are now captured
