@@ -25,9 +25,22 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # NOTE: the Legion Harden Runner action is published to the Marketplace for
-      # consumers; we no longer dogfood it in our own build pipeline. The action
-      # itself is exercised by enforce-selftest / fim-selftest / ebpf-agent.
+      - name: Harden runner (Legion)
+        uses: OpenSource-For-Freedom/legion_runner@v1   # Marketplace action
+        with:
+          egress-policy: block
+          # ebpf off: the published @v1 leaks its eBPF agent on teardown, which
+          # hangs the runner at "Complete job". Flip back to auto once a release
+          # ships the cleanup fix. Egress block/monitor still works.
+          ebpf: 'off'
+          allowed-endpoints: |
+            static.rust-lang.org
+            index.crates.io
+            static.crates.io
+            crates.io
+            actions.githubusercontent.com
+            blob.core.windows.net
+          policy-file: .legion/egress-allowed.txt
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
