@@ -207,7 +207,7 @@ function readPolicyFile(p) {
 function writePolicyFile(p, hosts) {
   fs.mkdirSync(path.dirname(p), { recursive: true });
   const body =
-    "# Legion Runner — learned egress allowlist.\n" +
+    "# Legion Runner: learned egress allowlist.\n" +
     "# Commit this file, then set egress-policy: block to deny everything else.\n" +
     "# Regenerate by running an audit job with learn: true.\n" +
     hosts.join("\n") +
@@ -276,7 +276,7 @@ function startEbpf(connectLog, bin) {
     out.pid = child.pid;
     child.unref();
     out.active = true;
-    info("   eBPF capture active (legionr-bpf: tracepoint sys_enter_connect — socket-layer, bypass-proof)");
+    info("   eBPF capture active (legionr-bpf: tracepoint sys_enter_connect, socket-layer, bypass-proof)");
   } catch (e) {
     warn(`eBPF capture unavailable (${e.message}); using the /proc sampler`);
   }
@@ -539,7 +539,7 @@ async function startDnsCapture(opts = {}) {
     out.active = true;
     info(
       `   DNS capture active (resolver → local logger → ${upstream})` +
-        (out.enforce ? " — enforcing allow-by-domain" : ""),
+        (out.enforce ? ", enforcing allow-by-domain" : ""),
     );
     // Also route getaddrinfo (curl/apt/cargo/git) through the forwarder so their
     // lookups are captured and named, not just resolv.conf/c-ares callers.
@@ -899,7 +899,7 @@ async function post() {
   const LOGO =
     "https://raw.githubusercontent.com/OpenSource-For-Freedom/legion_runner/main/assets/logo.jpg";
   let md = `<div align="center"><img src="${LOGO}" alt="Legion" width="120"/></div>\n\n`;
-  md += "## 🛡 Legion Runner — outbound connections\n\n";
+  md += "## 🛡 Legion Runner: outbound connections\n\n";
   md += `**Egress policy:** \`${st.policy}\`${st.enforced ? " (enforced)" : ""}  ·  `;
   md += `**Capture:** ${captureLayer}  ·  `;
   md += `**Resolution:** ${captureMode}  ·  `;
@@ -927,8 +927,8 @@ async function post() {
     md += `\n_${rows.length} unique destination(s) observed._`;
     if (unresolved) {
       const tip = st.dns && st.dns.active
-        ? "no name resolved — a raw-IP connection, or a name resolved via systemd-resolved (which bypasses the capture forwarder); no PTR record either"
-        : "had no PTR record — enable `dns-capture` for exact domains";
+        ? "no name resolved: a raw-IP connection, or a name resolved via systemd-resolved (which bypasses the capture forwarder); no PTR record either"
+        : "had no PTR record. Enable `dns-capture` for exact domains";
       md += ` _(${unresolved} ${tip}.)_`;
     }
     md += "\n";
@@ -987,7 +987,7 @@ async function post() {
     await cacheSaveDomains(merged);
     if (cache.available()) {
       md += `\n_Learned baseline saved to the Actions cache (${merged.length} domains). `;
-      md += "Set `egress-policy: block` to enforce it — no file or extra workflow needed._\n";
+      md += "Set `egress-policy: block` to enforce it. No file or extra workflow needed._\n";
     }
   }
 
@@ -998,7 +998,7 @@ async function post() {
     try {
       writePolicyFile(st.policyFile, merged);
       md += `\n### Learned egress baseline (${merged.length})\n`;
-      md += `Also written to \`${st.policyFileRel}\` — commit it for a reviewable allowlist:\n\n`;
+      md += `Also written to \`${st.policyFileRel}\` (commit it for a reviewable allowlist):\n\n`;
       md += "```\n" + merged.join("\n") + "\n```\n";
     } catch (e) {
       md += `\n_Could not write \`${st.policyFileRel}\`: ${e.message}_\n`;

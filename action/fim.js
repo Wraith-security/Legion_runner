@@ -135,7 +135,7 @@ function renderChanges(changes) {
     const d = severityFor(b) - severityFor(a);
     return d !== 0 ? d : a.path.localeCompare(b.path);
   });
-  let md = "\n### 🔏 File integrity — tampering detected\n";
+  let md = "\n### 🔏 File integrity: tampering detected\n";
   md += "| | Scope | File | Change |\n|---|---|---|---|\n";
   for (const c of sorted.slice(0, 100)) {
     md += `| ${sevIcon(severityFor(c))} | ${c.scope} | \`${c.path}\` | ${c.reason} |\n`;
