@@ -36,6 +36,7 @@ jobs:
           egress-policy: audit
           ebpf: 'off'
           dns-capture: 'true'
+          job-summary: 'false'   # self-test, not a report: keep it out of the summary
 
       - name: Install nightly + rust-src
         uses: dtolnay/rust-toolchain@nightly

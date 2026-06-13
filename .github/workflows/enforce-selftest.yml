@@ -39,6 +39,7 @@ jobs:
           allowed-endpoints: |
             example.com
           dns-capture: 'false'        # exercise the static-seed enforcement path
+          job-summary: 'false'        # self-test, not a report: keep it out of the summary
           ebpf: 'off'                 # this test is about the firewall, not
                                       # capture — no agent to spawn/clean up
           learned-baseline: 'false'   # inline allowlist ONLY — ignore the shared
@@ -79,6 +80,7 @@ jobs:
           allowed-endpoints: |
             example.com
           dns-capture: 'true'           # DNS forwarder + dynamic allow + its teardown
+          job-summary: 'false'          # self-test, not a report: keep it out of the summary
           ebpf: 'auto'                  # agent path (fail-closed download → /proc)
           learned-baseline: 'false'
 

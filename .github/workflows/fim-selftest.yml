@@ -33,6 +33,7 @@ jobs:
           egress-policy: audit
           ebpf: 'off'
           dns-capture: 'true'
+          job-summary: 'false'   # self-test, not a report: keep it out of the summary
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Build legionr-fim
