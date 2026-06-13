@@ -24,6 +24,11 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+# Every job hardens with our own action (audit + dns-capture) but suppresses its
+# per-job summary (job-summary: false). Instead each job emits its captured
+# egress as an artifact, and the final `egress-report` job merges them all into a
+# SINGLE run-level summary showing which job/process reached what, plus per-job
+# diagnostics. (GitHub has no native run-level summary; this is the aggregation.)
 jobs:
   rust:
     name: Rust test & lint
@@ -42,6 +47,7 @@ jobs:
           egress-policy: audit
           ebpf: 'off'
           dns-capture: 'true'
+          job-summary: 'false'   # combined into the egress-report job
           allowed-endpoints: |
             static.rust-lang.org
             index.crates.io
@@ -79,6 +85,18 @@ jobs:
       - name: Cargo build (release)
         run: cargo build --release -p legionr-cli
 
+      - name: Legion egress report (emit)
+        if: always()
+        run: node "$GITHUB_WORKSPACE/action/report.js" emit "$RUNNER_TEMP/legion-report.json"
+      - name: Upload egress report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: legion-egress-${{ github.job }}
+          path: ${{ runner.temp }}/legion-report.json
+          if-no-files-found: ignore
+          retention-days: 1
+
   action:
     name: Action unit tests
     runs-on: ubuntu-latest
@@ -91,7 +109,7 @@ jobs:
           egress-policy: audit       # monitor only; never breaks the build
           ebpf: 'off'
           dns-capture: 'true'
-          job-summary: 'false'   # one table per run — the rust job emits it
+          job-summary: 'false'   # combined into the egress-report job
 
       - uses: actions/setup-node@v6
         with:
@@ -104,6 +122,18 @@ jobs:
       - name: Unit + regression tests (node:test)
         run: node --test action/*.test.js
 
+      - name: Legion egress report (emit)
+        if: always()
+        run: node "$GITHUB_WORKSPACE/action/report.js" emit "$RUNNER_TEMP/legion-report.json"
+      - name: Upload egress report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: legion-egress-${{ github.job }}
+          path: ${{ runner.temp }}/legion-report.json
+          if-no-files-found: ignore
+          retention-days: 1
+
   shellcheck:
     name: Shell scripts
     runs-on: ubuntu-latest
@@ -115,11 +145,23 @@ jobs:
           egress-policy: audit
           ebpf: 'off'
           dns-capture: 'true'
-          job-summary: 'false'   # one table per run — the rust job emits it
+          job-summary: 'false'   # combined into the egress-report job
       - name: ShellCheck
         run: |
           sudo apt-get update && sudo apt-get install -y shellcheck
           shellcheck scripts/*.sh
+
+      - name: Legion egress report (emit)
+        if: always()
+        run: node "$GITHUB_WORKSPACE/action/report.js" emit "$RUNNER_TEMP/legion-report.json"
+      - name: Upload egress report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: legion-egress-${{ github.job }}
+          path: ${{ runner.temp }}/legion-report.json
+          if-no-files-found: ignore
+          retention-days: 1
 
   security:
     name: Security audit
@@ -132,7 +174,7 @@ jobs:
           egress-policy: audit
           ebpf: 'off'
           dns-capture: 'true'
-          job-summary: 'false'   # one table per run — the rust job emits it
+          job-summary: 'false'   # combined into the egress-report job
       - uses: dtolnay/rust-toolchain@stable
       # Install a prebuilt cargo-audit binary instead of `cargo install` (which
       # compiles it and pulls its whole dependency tree from crates.io — one
@@ -143,6 +185,18 @@ jobs:
           tool: cargo-audit
       - name: Audit dependencies
         run: cargo audit
+
+      - name: Legion egress report (emit)
+        if: always()
+        run: node "$GITHUB_WORKSPACE/action/report.js" emit "$RUNNER_TEMP/legion-report.json"
+      - name: Upload egress report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: legion-egress-${{ github.job }}
+          path: ${{ runner.temp }}/legion-report.json
+          if-no-files-found: ignore
+          retention-days: 1
 
   supply-chain:
     name: Supply chain (cargo-deny)
@@ -155,8 +209,37 @@ jobs:
           egress-policy: audit
           ebpf: 'off'
           dns-capture: 'true'
-          job-summary: 'false'   # one table per run — the rust job emits it
+          job-summary: 'false'   # combined into the egress-report job
       - name: cargo-deny (advisories, bans, sources)
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check advisories bans sources
+
+      - name: Legion egress report (emit)
+        if: always()
+        run: node "$GITHUB_WORKSPACE/action/report.js" emit "$RUNNER_TEMP/legion-report.json"
+      - name: Upload egress report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: legion-egress-${{ github.job }}
+          path: ${{ runner.temp }}/legion-report.json
+          if-no-files-found: ignore
+          retention-days: 1
+
+  # One summary for the whole run: merge every job's egress artifact into a single
+  # table (which job/process reached what) with a per-job diagnostics block.
+  egress-report:
+    name: Combined egress report
+    needs: [rust, action, shellcheck, security, supply-chain]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download per-job egress reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: legion-egress-*
+          path: legion-reports
+      - name: Render combined summary (all jobs)
+        run: node action/report.js render legion-reports >> "$GITHUB_STEP_SUMMARY"

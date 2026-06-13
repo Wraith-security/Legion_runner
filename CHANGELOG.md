@@ -43,6 +43,13 @@ Unreleased section.
   IPs. Bare IPs that never got a forward name get a coarse CDN/provider hint
   (Fastly/Cloudflare/GitHub) via CIDR match — honest about ambiguity (a shared
   CDN can't name a registry). Logic in `action/repos.js`, fully unit-tested.
+- **Combined cross-job egress report (one summary for the whole run)**: GitHub
+  has no run-level summary, so each job emits its captured egress as a JSON
+  artifact (`node action/report.js emit`) and a final `egress-report` job merges
+  them into a SINGLE table — which job + process reached what — with a package
+  repositories roll-up and a per-job diagnostics block (`render`). Wired into CI;
+  `render` is pure and unit-tested. Pairs with `job-summary: false` so the run
+  shows one combined summary instead of one table per job.
 - **`job-summary` input** (default `true`): set `false` to keep monitoring and
   enforcement fully active but suppress the connections table in the job summary.
   Useful when many jobs in one workflow each run the action and you only want the
