@@ -19,6 +19,7 @@ const path = require("node:path");
 const cache = require("./cache.js");
 const ebpf = require("./ebpf.js");
 const fim = require("./fim.js");
+const repos = require("./repos.js");
 
 // GitHub + Actions endpoints a job almost always needs. Kept in sync with
 // legionr-core's harden::GITHUB_EGRESS.
@@ -451,6 +452,74 @@ function currentUpstream() {
   }
 }
 
+/// The *real* (non-loopback) upstream resolver, read from systemd-resolved's
+/// generated file first (which lists the actual servers, not the 127.0.0.53
+/// stub), then /etc/resolv.conf. Returns null when only loopback/stub servers
+/// are configured — in which case redirecting systemd-resolved at our forwarder
+/// would loop, so the caller must not do it. Used to point the forwarder at the
+/// true upstream so capture works regardless of the stub.
+function realUpstream() {
+  for (const f of ["/run/systemd/resolve/resolv.conf", "/etc/resolv.conf"]) {
+    try {
+      const ns = fs
+        .readFileSync(f, "utf8")
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l.startsWith("nameserver"))
+        .map((l) => l.split(/\s+/)[1])
+        .filter((ip) => ip && !ip.startsWith("127.") && ip !== "::1");
+      if (ns.length) return ns[0];
+    } catch {
+      /* try next file */
+    }
+  }
+  return null;
+}
+
+/// On runners where glibc getaddrinfo resolves via systemd-resolved's stub
+/// (127.0.0.53), rewriting /etc/resolv.conf isn't enough — resolved owns those
+/// lookups and ignores it, so package-repo names never reach the capture
+/// forwarder (the job's connections then show as bare IPs). Point resolved
+/// itself at the forwarder via a drop-in, restart it, and VERIFY getaddrinfo
+/// still resolves; revert on any failure so we never break the job's DNS.
+/// Requires a real upstream (else a redirect would loop) — guarded by caller.
+function redirectSystemdResolved(out, upstream) {
+  try {
+    if (!fs.existsSync("/run/systemd/resolve")) return; // resolved not in use
+    if (!upstream || upstream.startsWith("127.") || upstream === "::1") return; // would loop
+    const dir = "/etc/systemd/resolved.conf.d";
+    const dropin = path.join(dir, "legion.conf");
+    const tmp = path.join(os.tmpdir(), "legion-resolved.conf");
+    fs.writeFileSync(tmp, "[Resolve]\nDNS=127.0.0.1\nDomains=~.\n");
+    sudo(["mkdir", "-p", dir]);
+    sudo(["cp", tmp, dropin]);
+    sudo(["systemctl", "restart", "systemd-resolved"]);
+    out.resolvedDropin = dropin; // record before verifying so teardown cleans up
+    if (!fsResolvedVerify()) {
+      sudo(["rm", "-f", dropin]);
+      sudo(["systemctl", "restart", "systemd-resolved"]);
+      out.resolvedDropin = null;
+      warn("systemd-resolved redirect reverted (getaddrinfo check failed); some hosts may stay unnamed");
+      return;
+    }
+    info("   routed systemd-resolved through the capture forwarder (resolved.conf.d)");
+  } catch (e) {
+    warn(`could not redirect systemd-resolved (${e.message}); some getaddrinfo lookups may bypass capture`);
+  }
+}
+
+/// Synchronous best-effort getaddrinfo probe (the async resolvesViaGetaddrinfo
+/// can't be awaited from the sync redirect path). Resolves a known name via the
+/// OS path; true on success.
+function fsResolvedVerify() {
+  try {
+    execFileSync("getent", ["hosts", "github.com"], { timeout: 3000, stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /// Can we resolve a known name through `server`?
 async function resolvesVia(server) {
   try {
@@ -489,6 +558,7 @@ async function rerouteNsswitch(out) {
     const nss = fs.readFileSync("/etc/nsswitch.conf", "utf8");
     // Only act if a bypassing module is present (resolve/mymachines/mdns).
     if (!/^hosts:.*\b(resolve|mymachines|mdns)/m.test(nss)) return;
+    out.nsswitchTried = true; // a getaddrinfo bypass exists; record we tried
     const backup = path.join(os.tmpdir(), "nsswitch.conf.legion.bak");
     sudo(["cp", "/etc/nsswitch.conf", backup]);
     const tmp = path.join(os.tmpdir(), "nsswitch.legion");
@@ -518,7 +588,10 @@ async function startDnsCapture(opts = {}) {
   };
   try {
     fs.writeFileSync(out.log, "");
-    const upstream = currentUpstream();
+    // Prefer the real upstream (systemd-resolved's actual servers) over the
+    // 127.0.0.53 stub, so the forwarder reaches DNS directly and a possible
+    // resolved redirect can't loop.
+    const upstream = realUpstream() || currentUpstream();
     const cap = path.join(__dirname, "dnscap.js");
     // argv: <log> <upstream> <port> <enforce 0|1> <allow-domains csv>
     const argv = [
@@ -553,6 +626,12 @@ async function startDnsCapture(opts = {}) {
     // Also route getaddrinfo (curl/apt/cargo/git) through the forwarder so their
     // lookups are captured and named, not just resolv.conf/c-ares callers.
     await rerouteNsswitch(out);
+    // If a getaddrinfo bypass was detected but the nsswitch reroute didn't
+    // stick, fall back to redirecting systemd-resolved itself at the forwarder
+    // (verify-or-revert). This is the case where repo names show as bare IPs.
+    if (out.nsswitchTried && !out.nsswitchBackup) {
+      redirectSystemdResolved(out, upstream);
+    }
   } catch (e) {
     warn(`DNS capture unavailable (${e.message}); falling back to reverse DNS`);
     killDnsForwarder(out.pid);
@@ -612,6 +691,14 @@ function stopDnsCapture(dns) {
   }
   try {
     if (dns.nsswitchBackup) sudo(["cp", dns.nsswitchBackup, "/etc/nsswitch.conf"]);
+  } catch {
+    /* best-effort restore */
+  }
+  try {
+    if (dns.resolvedDropin) {
+      sudo(["rm", "-f", dns.resolvedDropin]);
+      sudo(["systemctl", "restart", "systemd-resolved"]);
+    }
   } catch {
     /* best-effort restore */
   }
@@ -888,6 +975,11 @@ async function post() {
       groups.get(dest) ||
       {
         host: host || null,
+        // Classify outbound destinations into a package ecosystem/registry. A
+        // forward name (DNS capture) classifies precisely; a bare IP only gets
+        // a coarse CDN/provider hint (a shared CDN can't name a registry).
+        repo: repos.classifyRepo(host),
+        provider: host ? null : (repos.classifyByIp(ip) || {}).provider || null,
         ips: new Set(),
         ports: new Set(),
         procs: new Set(),
@@ -914,6 +1006,27 @@ async function post() {
   md += `**Resolution:** ${captureMode}  ·  `;
   md += `**Started:** ${st.startedAt}\n\n`;
 
+  // Diagnostics line — shows which resolution path actually fired so a run can
+  // be triaged when names come back as bare IPs. SECURE BY CONSTRUCTION: emits
+  // only booleans, counts, and a fixed enum — never the upstream resolver IP,
+  // file paths, captured hostnames, or any env value. (The upstream IP isn't
+  // even persisted to state, so it can't leak here.)
+  const dnsActive = !!(st.dns && st.dns.active);
+  const gaiRoute = !dnsActive
+    ? "n/a (reverse DNS)"
+    : st.dns.nsswitchBackup
+      ? "nsswitch"
+      : st.dns.resolvedDropin
+        ? "systemd-resolved"
+        : st.dns.nsswitchTried
+          ? "unredirected (bypass detected)"
+          : "default";
+  const named = rows.length - unresolved;
+  md += `<sub>**Diagnostics:** forwarder ${dnsActive ? "on" : "off"} · `;
+  md += `captured DNS records ${Object.keys(dnsMap).length} · `;
+  md += `getaddrinfo route ${gaiRoute} · `;
+  md += `named ${named}/${rows.length} destinations</sub>\n\n`;
+
   const procCol = usedEbpf; // process attribution only available via eBPF
   if (rows.length === 0) {
     md += "_No outbound connections were observed during this run._\n";
@@ -925,7 +1038,11 @@ async function post() {
       const ips = [...g.ips];
       const addr = ips.slice(0, 2).join(", ") + (ips.length > 2 ? `, +${ips.length - 2}` : "");
       const ports = [...g.ports].sort((a, b) => Number(a) - Number(b)).join(", ") || "-";
-      const name = g.host ? g.host : `\`${dest}\``;
+      // Name cell: forward name when known; otherwise the bare IP, annotated
+      // with a CDN/provider hint when we can place its range.
+      const name = g.host
+        ? g.host
+        : `\`${dest}\`${g.provider ? ` _(${g.provider})_` : ""}`;
       if (procCol) {
         const procs = [...g.procs].slice(0, 3).join(", ") || "-";
         md += `| ${name} | \`${addr}\` | ${ports} | ${procs} | ${g.conns} | ${g.decision} |\n`;
@@ -941,6 +1058,43 @@ async function post() {
       md += ` _(${unresolved} ${tip}.)_`;
     }
     md += "\n";
+
+    // 📦 Package repositories roll-up: collapse the named destinations into the
+    // package registries the job actually reached (outbound), with the process
+    // that reached each and the total connections. This is the "which package
+    // repos did this run talk to" view, distinct from the per-host table above.
+    const byRegistry = new Map();
+    for (const [, g] of rows) {
+      if (!g.repo) continue;
+      const key = g.repo.registry;
+      const r = byRegistry.get(key) || {
+        ecosystem: g.repo.ecosystem,
+        conns: 0,
+        procs: new Set(),
+        decisions: new Set(),
+      };
+      r.conns += g.conns;
+      for (const p of g.procs) r.procs.add(p);
+      r.decisions.add(g.decision);
+      byRegistry.set(key, r);
+    }
+    if (byRegistry.size) {
+      const reg = [...byRegistry.entries()].sort((a, b) => b[1].conns - a[1].conns);
+      md += "\n### 📦 Package repositories reached\n";
+      md += procCol
+        ? "| Registry | Ecosystem | Conns | Via | Decision |\n|---|---|---:|---|---|\n"
+        : "| Registry | Ecosystem | Conns | Decision |\n|---|---|---:|---|\n";
+      for (const [registry, r] of reg) {
+        const decision = [...r.decisions].join(", ");
+        if (procCol) {
+          const via = [...r.procs].slice(0, 3).join(", ") || "-";
+          md += `| ${registry} | ${r.ecosystem} | ${r.conns} | ${via} | ${decision} |\n`;
+        } else {
+          md += `| ${registry} | ${r.ecosystem} | ${r.conns} | ${decision} |\n`;
+        }
+      }
+      md += `\n_${reg.length} package registr${reg.length === 1 ? "y" : "ies"} reached._\n`;
+    }
   }
 
   // Blocked attempts: in block mode, surface what the firewall denied (parsed

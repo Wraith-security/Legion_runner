@@ -27,6 +27,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Harden runner (Legion)
+        uses: OpenSource-For-Freedom/legion_runner@v1   # dogfood our own action (audit)
+        with:
+          egress-policy: audit
+          ebpf: 'off'
+          dns-capture: 'off'
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Build legionr-fim

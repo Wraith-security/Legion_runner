@@ -50,6 +50,12 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
           fetch-tags: true
+      - name: Harden runner (Legion)
+        uses: OpenSource-For-Freedom/legion_runner@v1   # dogfood our own action (audit)
+        with:
+          egress-policy: audit
+          ebpf: 'off'
+          dns-capture: 'off'
 
       - name: Compute next version
         id: ver
@@ -145,6 +151,12 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.release.outputs.sha }}
+      - name: Harden runner (Legion)
+        uses: OpenSource-For-Freedom/legion_runner@v1   # dogfood our own action (audit)
+        with:
+          egress-policy: audit
+          ebpf: 'off'
+          dns-capture: 'off'
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
@@ -179,6 +191,12 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.release.outputs.sha }}
+      - name: Harden runner (Legion)
+        uses: OpenSource-For-Freedom/legion_runner@v1   # dogfood our own action (audit)
+        with:
+          egress-policy: audit
+          ebpf: 'off'
+          dns-capture: 'off'
       - uses: dtolnay/rust-toolchain@stable
       - name: Build legionr-fim (release)
         run: cargo build --release -p legionr-fim
