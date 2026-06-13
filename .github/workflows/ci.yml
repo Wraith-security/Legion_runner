@@ -45,7 +45,7 @@ jobs:
           # capturing is safe here. allowed-endpoints below pre-seed block mode for
           # the day we flip egress-policy to block; in audit they're just hints.
           egress-policy: audit
-          ebpf: 'off'
+          ebpf: 'auto'
           dns-capture: 'true'
           job-summary: 'false'   # combined into the egress-report job
           allowed-endpoints: |
@@ -107,7 +107,7 @@ jobs:
         uses: OpenSource-For-Freedom/legion_runner@v1   # dogfood our own action (audit)
         with:
           egress-policy: audit       # monitor only; never breaks the build
-          ebpf: 'off'
+          ebpf: 'auto'
           dns-capture: 'true'
           job-summary: 'false'   # combined into the egress-report job
 
@@ -143,7 +143,7 @@ jobs:
         uses: OpenSource-For-Freedom/legion_runner@v1   # dogfood our own action (audit)
         with:
           egress-policy: audit
-          ebpf: 'off'
+          ebpf: 'auto'
           dns-capture: 'true'
           job-summary: 'false'   # combined into the egress-report job
       - name: ShellCheck
@@ -172,7 +172,7 @@ jobs:
         uses: OpenSource-For-Freedom/legion_runner@v1   # dogfood our own action (audit)
         with:
           egress-policy: audit
-          ebpf: 'off'
+          ebpf: 'auto'
           dns-capture: 'true'
           job-summary: 'false'   # combined into the egress-report job
       - uses: dtolnay/rust-toolchain@stable
@@ -207,7 +207,7 @@ jobs:
         uses: OpenSource-For-Freedom/legion_runner@v1   # dogfood our own action (audit)
         with:
           egress-policy: audit
-          ebpf: 'off'
+          ebpf: 'auto'
           dns-capture: 'true'
           job-summary: 'false'   # combined into the egress-report job
       - name: cargo-deny (advisories, bans, sources)
