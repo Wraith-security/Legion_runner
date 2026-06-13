@@ -146,6 +146,7 @@ triagable without leaking infrastructure detail.
 | `learned-baseline` | `true` | In block mode, also allow destinations learned into the Actions cache. Set `false` to enforce only the explicit allowlist. |
 | `file-integrity` | `auto` | Detect file tampering during the job (Rust `legionr-fim` agent): credential/config files, `.git` config + hooks, and checked-out source. `auto` or `off`. |
 | `fim-extra-paths` | `` | Extra files to watch for tampering (one per line / comma-separated). |
+| `job-summary` | `true` | Write the connections table to the job summary. Set `false` to keep monitoring/enforcement active but suppress the table — handy when many jobs in one workflow each harden and you only want the summary once. |
 | `disable-sudo` | `false` | Revoke the runner user's sudo after setup. |
 | `disable-telemetry` | `false` | Suppress lifecycle events (stay fully local). |
 | `legion-link` | `` | Stream egress events to a Legion desktop endpoint. |

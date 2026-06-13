@@ -754,6 +754,10 @@ async function main() {
   // the explicit allowlist (inline + file + GitHub), with no cache read/write —
   // used by the enforce self-test so its deny case is deterministic.
   const useLearned = boolInput("learned-baseline", true);
+  // Whether post() writes the connections table to the job summary. Off keeps
+  // monitoring/enforcement fully active but suppresses the markdown — useful when
+  // many jobs in a workflow each harden and you only want the table once.
+  const jobSummary = boolInput("job-summary", true);
   const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
   const policyFile = policyFileRel ? path.resolve(workspace, policyFileRel) : "";
 
@@ -874,6 +878,7 @@ async function main() {
       policyFileRel,
       learn,
       useLearned,
+      jobSummary,
       startedAt: new Date().toISOString(),
     }),
   );
@@ -1180,8 +1185,14 @@ async function post() {
     }
   }
 
-  summary(md);
-  info(`Legion Runner: reported ${rows.length} outbound destination(s).`);
+  // job-summary: false keeps monitoring/enforcement active but suppresses the
+  // markdown table (so a multi-job workflow isn't spammed with one table per job).
+  if (st.jobSummary === false) {
+    info(`Legion Runner: job summary suppressed (job-summary: false); ${rows.length} outbound destination(s) observed.`);
+  } else {
+    summary(md);
+    info(`Legion Runner: reported ${rows.length} outbound destination(s).`);
+  }
 
   await emit(st.link, {
     runner: process.env.RUNNER_NAME || "github-hosted",

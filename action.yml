@@ -97,6 +97,14 @@ inputs:
       separated. Useful for project-specific secrets or scripts.
     required: false
     default: ''
+  job-summary:
+    description: >-
+      Write the outbound-connections table to the GitHub job summary. Set to
+      "false" to keep monitoring/enforcement fully active but suppress the table
+      (useful when many jobs in one workflow each harden and you only want the
+      summary once).
+    required: false
+    default: 'true'
 
 runs:
   using: 'node24'

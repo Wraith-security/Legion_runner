@@ -89,8 +89,9 @@ jobs:
         uses: OpenSource-For-Freedom/legion_runner@v1   # dogfood our own action (audit)
         with:
           egress-policy: audit       # monitor only; never breaks the build
-          ebpf: 'off'                # daemons off until @v1 carries the teardown fix
+          ebpf: 'off'
           dns-capture: 'true'
+          job-summary: 'false'   # one table per run — the rust job emits it
 
       - uses: actions/setup-node@v6
         with:
@@ -114,6 +115,7 @@ jobs:
           egress-policy: audit
           ebpf: 'off'
           dns-capture: 'true'
+          job-summary: 'false'   # one table per run — the rust job emits it
       - name: ShellCheck
         run: |
           sudo apt-get update && sudo apt-get install -y shellcheck
@@ -130,6 +132,7 @@ jobs:
           egress-policy: audit
           ebpf: 'off'
           dns-capture: 'true'
+          job-summary: 'false'   # one table per run — the rust job emits it
       - uses: dtolnay/rust-toolchain@stable
       # Install a prebuilt cargo-audit binary instead of `cargo install` (which
       # compiles it and pulls its whole dependency tree from crates.io — one
@@ -152,6 +155,7 @@ jobs:
           egress-policy: audit
           ebpf: 'off'
           dns-capture: 'true'
+          job-summary: 'false'   # one table per run — the rust job emits it
       - name: cargo-deny (advisories, bans, sources)
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
