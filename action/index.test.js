@@ -24,6 +24,12 @@ test("normalizeIp maps IPv4-mapped IPv6 to plain IPv4", () => {
   assert.equal(normalizeIp("::FFFF:1.2.3.4"), "1.2.3.4");
   assert.equal(normalizeIp("140.82.114.21"), "140.82.114.21");
   assert.equal(normalizeIp("2606:50c0::153"), "2606:50c0::153");
+  // Expanded IPv4-mapped form (as /proc/net/tcp6 or the eBPF agent can emit it)
+  // must also collapse — this is the "shows as long IPv6" regression.
+  assert.equal(normalizeIp("0000:0000:0000:0000:0000:ffff:1455:8269"), "20.85.130.105");
+  assert.equal(normalizeIp("[0:0:0:0:0:ffff:8c52:7015]"), "140.82.112.21");
+  // a genuine IPv6 with an ffff hextet that is NOT v4-mapped stays untouched
+  assert.equal(normalizeIp("2606:4700:ffff::1"), "2606:4700:ffff::1");
 });
 
 test("splitPeer handles ipv4, bracketed ipv6, and bare", () => {

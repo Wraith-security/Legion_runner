@@ -59,6 +59,13 @@ test("parseProcNet returns ESTABLISHED peers only, skips LISTEN", () => {
   assert.deepEqual(parseProcNet("header\n", false), []);
 });
 
+test("hexIpv6 collapses IPv4-mapped addresses to dotted IPv4", () => {
+  // /proc hex (4 little-endian words) for ::ffff:20.85.202.224
+  assert.equal(hexIpv6("0000000000000000ffff0000e0ca5514"), "20.85.202.224");
+  // a genuine IPv6 (::1) still renders as a bracketed v6 address
+  assert.match(hexIpv6("00000000000000000000000001000000"), /^\[[0-9a-f:]+\]$/);
+});
+
 test("parseProcNet v6 brackets the address", () => {
   // ::1 in /proc hex (16 bytes), port 0x1F90 = 8080, state ESTABLISHED
   const v6body =

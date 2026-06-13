@@ -153,7 +153,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Normalize IPv4-mapped IPv6 (::ffff:1.2.3.4) to plain IPv4 so the two forms
 // dedupe into one destination.
 function normalizeIp(ip) {
-  return ip && ip.toLowerCase().startsWith("::ffff:") ? ip.slice(7) : ip;
+  if (!ip) return ip;
+  const low = ip.toLowerCase().replace(/^\[|\]$/g, "");
+  // Compressed IPv4-mapped IPv6: ::ffff:1.2.3.4 -> 1.2.3.4
+  if (low.startsWith("::ffff:") && low.includes(".")) return ip.replace(/^\[|\]$/g, "").slice(7);
+  // Expanded IPv4-mapped IPv6 (0:0:0:0:0:ffff:HHHH:HHHH) — as /proc or the eBPF
+  // agent can emit it. Collapse the trailing two hextets to dotted IPv4.
+  const m = low.match(/^(?:0{1,4}:){5}ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (m) {
+    const hi = parseInt(m[1], 16);
+    const lo = parseInt(m[2], 16);
+    return [hi >> 8, hi & 0xff, lo >> 8, lo & 0xff].join(".");
+  }
+  return ip;
 }
 
 // ── Endpoint parsing / resolution ───────────────────────────────────────────

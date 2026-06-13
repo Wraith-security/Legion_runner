@@ -26,6 +26,14 @@ function hexIpv6(h) {
     words.push([6, 4, 2, 0].map((j) => w.substr(j, 2)).join(""));
   }
   const flat = words.join("");
+  // IPv4-mapped IPv6 (::ffff:a.b.c.d) — what /proc/net/tcp6 reports for a socket
+  // to an IPv4 service (common on hosted runners). Collapse to dotted IPv4 so it
+  // renders as a real address and dedupes with the v4 table, instead of a long
+  // 0000:0000:...:ffff:HHHH:HHHH string.
+  if (/^0{20}ffff/i.test(flat)) {
+    const v4 = flat.slice(24);
+    return [0, 2, 4, 6].map((i) => parseInt(v4.substr(i, 2), 16)).join(".");
+  }
   const parts = [];
   for (let i = 0; i < 8; i++) parts.push(flat.substr(i * 4, 4));
   return `[${parts.join(":")}]`;
