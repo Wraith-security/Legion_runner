@@ -35,7 +35,7 @@ jobs:
         with:
           egress-policy: audit
           ebpf: 'off'
-          dns-capture: 'off'
+          dns-capture: 'true'
 
       - name: Install nightly + rust-src
         uses: dtolnay/rust-toolchain@nightly

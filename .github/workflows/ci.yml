@@ -35,14 +35,13 @@ jobs:
       - name: Harden runner (Legion)
         uses: OpenSource-For-Freedom/legion_runner@v1   # Marketplace action
         with:
-          # INTERIM: audit (monitor, don't firewall). block mode needs dns-capture
-          # to reach rotating CDN endpoints (Actions cache, crates.io), but
-          # dns-capture is off until @v1 ships the teardown fix — so block here
-          # would time out the cache. audit + daemons off works and still ships
-          # the release. Flip to block + dns-capture on once @v1 carries the fix.
+          # audit (monitor, don't firewall) + dns-capture ON to NAME destinations:
+          # @v1 (>= 1.0.35) carries the teardown + systemd-resolved fixes, so
+          # capturing is safe here. allowed-endpoints below pre-seed block mode for
+          # the day we flip egress-policy to block; in audit they're just hints.
           egress-policy: audit
           ebpf: 'off'
-          dns-capture: 'off'
+          dns-capture: 'true'
           allowed-endpoints: |
             static.rust-lang.org
             index.crates.io
@@ -91,7 +90,7 @@ jobs:
         with:
           egress-policy: audit       # monitor only; never breaks the build
           ebpf: 'off'                # daemons off until @v1 carries the teardown fix
-          dns-capture: 'off'
+          dns-capture: 'true'
 
       - uses: actions/setup-node@v6
         with:
@@ -114,7 +113,7 @@ jobs:
         with:
           egress-policy: audit
           ebpf: 'off'
-          dns-capture: 'off'
+          dns-capture: 'true'
       - name: ShellCheck
         run: |
           sudo apt-get update && sudo apt-get install -y shellcheck
@@ -130,7 +129,7 @@ jobs:
         with:
           egress-policy: audit
           ebpf: 'off'
-          dns-capture: 'off'
+          dns-capture: 'true'
       - uses: dtolnay/rust-toolchain@stable
       # Install a prebuilt cargo-audit binary instead of `cargo install` (which
       # compiles it and pulls its whole dependency tree from crates.io — one
@@ -152,7 +151,7 @@ jobs:
         with:
           egress-policy: audit
           ebpf: 'off'
-          dns-capture: 'off'
+          dns-capture: 'true'
       - name: cargo-deny (advisories, bans, sources)
         uses: EmbarkStudios/cargo-deny-action@v2
         with:

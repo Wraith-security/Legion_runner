@@ -55,7 +55,7 @@ jobs:
         with:
           egress-policy: audit
           ebpf: 'off'
-          dns-capture: 'off'
+          dns-capture: 'true'
 
       - name: Compute next version
         id: ver
@@ -156,7 +156,7 @@ jobs:
         with:
           egress-policy: audit
           ebpf: 'off'
-          dns-capture: 'off'
+          dns-capture: 'true'
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
@@ -196,7 +196,7 @@ jobs:
         with:
           egress-policy: audit
           ebpf: 'off'
-          dns-capture: 'off'
+          dns-capture: 'true'
       - uses: dtolnay/rust-toolchain@stable
       - name: Build legionr-fim (release)
         run: cargo build --release -p legionr-fim

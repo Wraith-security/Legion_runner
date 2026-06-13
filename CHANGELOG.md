@@ -76,6 +76,11 @@ Unreleased section.
   fails, Legion redirects systemd-resolved itself at the forwarder via a
   `resolved.conf.d` drop-in — **verify-or-revert** and restored on teardown, so
   it never breaks the job's DNS.
+- **IPv4-mapped IPv6 destinations rendered as long expanded addresses**
+  (`0000:0000:0000:0000:0000:ffff:HHHH:HHHH`) in the summary. The `/proc` sampler
+  emitted the expanded form while `normalizeIp` only collapsed the compressed
+  `::ffff:` form. Both now collapse to dotted IPv4 (and the v4/v6 tables dedupe).
+  (Shipped in v1.0.35.)
 - Removed dead `action/baseline.js`; pinned `release.yml` checkout to v6.
 
 ### Reliability
@@ -104,6 +109,11 @@ Unreleased section.
   `paths-ignore`; a `docs-passthrough` workflow reports the same check names
   green so required checks stay satisfied and README edits stay mergeable
   without burning CI minutes.
+- **Our CI now captures names.** The dogfooded harden steps run with
+  `dns-capture: true` (still `audit` — monitor, don't firewall), so job summaries
+  show real destination and package-repository names instead of bare IPs, and the
+  capture path is exercised on every run. Safe now that `@v1` (>= 1.0.35) carries
+  the teardown + systemd-resolved fixes.
 
 ## [1.0.14] — Legion Runner platform
 

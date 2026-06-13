@@ -32,7 +32,7 @@ jobs:
         with:
           egress-policy: audit
           ebpf: 'off'
-          dns-capture: 'off'
+          dns-capture: 'true'
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Build legionr-fim
