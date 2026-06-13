@@ -1274,4 +1274,5 @@ module.exports = {
   ECOSYSTEM_PRESETS,
   egressBlockRules,
   egressUnblockRules,
+  readDnsMap,
 };

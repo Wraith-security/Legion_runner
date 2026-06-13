@@ -55,6 +55,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: echo "Docs-only change; skipping ${{ github.job }}."
+  egress-report:
+    name: Combined egress report
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Docs-only change; skipping ${{ github.job }}."
 
   # ── Enforce self-test (enforce-selftest.yml) ────────────────────────────────
   enforce:
