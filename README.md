@@ -72,9 +72,10 @@ to catch tampering, are written in Rust, and that choice buys real safety:
 The action hardens any job, including GitHub-hosted runners. It monitors (and
 optionally blocks) outbound network traffic, then prints every outbound
 connection as a markdown table in the job summary. Features: **socket-layer eBPF
-capture** (process attribution, bypass-proof), **dynamic allow-by-domain**
-blocking, **self-contained learn-then-enforce** (no external service), and
-**file-integrity / tamper detection**.
+capture** (process attribution, bypass-proof), **package-repository attribution**
+(names the registries each job reached — npm, PyPI, crates.io, apt, Docker, …),
+**dynamic allow-by-domain** blocking, **self-contained learn-then-enforce** (no
+external service), and **file-integrity / tamper detection**.
 
 ```yaml
 steps:
@@ -97,16 +98,38 @@ agent is active):
 
 > ## 🛡 Legion Runner: outbound connections
 > **Capture:** eBPF (sys_enter_connect) · **Resolution:** DNS capture
+> <sub>**Diagnostics:** forwarder on · captured DNS records 31 · getaddrinfo route systemd-resolved · named 4/4 destinations</sub>
 >
 > | Destination | Address | Port(s) | Process | Conns | Decision |
 > |---|---|---|---|---:|---|
 > | github.com | `140.82.112.3` | 443 | git | 24 | ✅ Allowed |
 > | registry.npmjs.org | `104.16.0.1` | 443 | node | 8 | ✅ Allowed |
+> | static.crates.io | `151.101.0.1` | 443 | cargo | 12 | ✅ Allowed |
+>
+> ### 📦 Package repositories reached
+> | Registry | Ecosystem | Conns | Via | Decision |
+> |---|---|---:|---|---|
+> | crates.io | cargo | 12 | cargo | ✅ Allowed |
+> | npm | npm | 8 | node | ✅ Allowed |
 >
 > ### ⛔ Blocked attempts
 > | Destination | Address |
 > |---|---|
 > | telemetry.example.net | `203.0.113.7:443` |
+
+**Named destinations, and the package repositories you actually reached.** A
+supply-chain attack hides in the registries your build talks to, so a table of
+bare IPs isn't enough — you need to see *which* repositories a job reached. The
+**📦 Package repositories reached** roll-up classifies named destinations into
+their ecosystem (npm, PyPI, crates.io, apt, Docker, Go, …) with the process that
+reached each, so a rogue or unexpected registry is obvious at a glance. Getting
+real names is the hard part on hosted runners: `getaddrinfo` (curl/pip/npm/cargo)
+resolves through systemd-resolved, which ignores a plain `resolv.conf` rewrite —
+so Legion routes those lookups through its capture forwarder (and bare IPs that
+slip through get a CDN/provider hint). The **Diagnostics** line reports which
+resolution path won and how many lookups were captured — counts and enums only,
+never resolver IPs, paths, or hostnames — so a run that comes back as bare IPs is
+triagable without leaking infrastructure detail.
 
 ### Inputs
 

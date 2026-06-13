@@ -34,6 +34,20 @@ Unreleased section.
   release (plain stable Rust, no eBPF toolchain) and degrades to a silent skip
   if unavailable. Logic lives in `legionr-core::fim` (unit-tested); the binary
   is a release asset like `legionr-bpf`, built + attached by `release.yml`.
+- **Package repositories roll-up (`📦`)**: the summary now classifies named
+  outbound destinations into their ecosystem/registry (npm, PyPI, crates.io,
+  apt, Docker, Go, NuGet, Maven, Gradle, RubyGems, Alpine, GitHub) and shows a
+  **Package repositories reached** table — registry, ecosystem, connections, and
+  the process that reached each. Supply-chain risk hides in *which* registries a
+  build talks to, so we surface them directly instead of leaving you to read
+  IPs. Bare IPs that never got a forward name get a coarse CDN/provider hint
+  (Fastly/Cloudflare/GitHub) via CIDR match — honest about ambiguity (a shared
+  CDN can't name a registry). Logic in `action/repos.js`, fully unit-tested.
+- **Secure diagnostics line** in the summary: reports which resolution path
+  actually fired (`forwarder on/off · captured DNS records N · getaddrinfo route
+  … · named X/Y destinations`) so a run that comes back as bare IPs is triagable.
+  Secure by construction — only booleans, counts, and a fixed enum; never the
+  upstream resolver IP, file paths, captured hostnames, or env values.
 
 ### Fixed
 - **Block mode no longer hangs the runner at teardown.** `applyEgressBlock`
@@ -54,6 +68,14 @@ Unreleased section.
 - **Docs/labels**: the eBPF mechanism is a **tracepoint on `sys_enter_connect`**
   (not a "kprobe on tcp_connect"); the sampler is `/proc`-only (the "ss" fallback
   was removed). Corrected the runtime log line, summary label, and README.
+- **Outbound connections showed as bare IPs when systemd-resolved owns
+  `getaddrinfo`.** The `nsswitch` reroute didn't always stick, so package-repo
+  lookups bypassed the capture forwarder and were never named. The forwarder now
+  targets the *real* upstream (systemd-resolved's actual servers, not the
+  `127.0.0.53` stub), and when the bypass is detected but the nsswitch reroute
+  fails, Legion redirects systemd-resolved itself at the forwarder via a
+  `resolved.conf.d` drop-in — **verify-or-revert** and restored on teardown, so
+  it never breaks the job's DNS.
 - Removed dead `action/baseline.js`; pinned `release.yml` checkout to v6.
 
 ### Reliability
@@ -61,7 +83,8 @@ Unreleased section.
   (`egressBlockRules`/`egressUnblockRules` — order, DNS-allow, DROP-last,
   OUTPUT-jump-removed-first), the checksum parser, the curated presets, and a
   **full-stack PR gate** that runs block + DNS-capture + eBPF and asserts the
-  job finalizes (catches any teardown-hang regression). Action test count 19 → 30.
+  job finalizes (catches any teardown-hang regression), plus the package-repo
+  classifier (host-suffix + CIDR matching). Action test count 19 → 37.
 
 ### Changed
 - Removed em-dashes from the job-summary output (headers, the unresolved-host
@@ -74,6 +97,13 @@ Unreleased section.
   there is no name to resolve.)
 - More accurate "unresolved destination" note in the summary (a name may have
   been resolved outside the capture path, vs. a genuine raw-IP connection).
+- **We dogfood our own action.** Every real-work job in this repo (CI, release,
+  eBPF agent, FIM self-test) now runs Legion Runner as its first step (`@v1`,
+  audit) — our CI is hardened by the product it ships.
+- **Docs-only PRs skip the build/test matrix** (and the release it gates) via
+  `paths-ignore`; a `docs-passthrough` workflow reports the same check names
+  green so required checks stay satisfied and README edits stay mergeable
+  without burning CI minutes.
 
 ## [1.0.14] — Legion Runner platform
 
