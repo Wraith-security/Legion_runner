@@ -157,6 +157,7 @@ jobs:
           egress-policy: audit
           ebpf: 'off'
           dns-capture: 'true'
+          job-summary: 'false'   # the release job emits the one table for this run
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
@@ -197,6 +198,7 @@ jobs:
           egress-policy: audit
           ebpf: 'off'
           dns-capture: 'true'
+          job-summary: 'false'   # the release job emits the one table for this run
       - uses: dtolnay/rust-toolchain@stable
       - name: Build legionr-fim (release)
         run: cargo build --release -p legionr-fim

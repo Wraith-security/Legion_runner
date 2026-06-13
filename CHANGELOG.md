@@ -43,6 +43,10 @@ Unreleased section.
   IPs. Bare IPs that never got a forward name get a coarse CDN/provider hint
   (Fastly/Cloudflare/GitHub) via CIDR match — honest about ambiguity (a shared
   CDN can't name a registry). Logic in `action/repos.js`, fully unit-tested.
+- **`job-summary` input** (default `true`): set `false` to keep monitoring and
+  enforcement fully active but suppress the connections table in the job summary.
+  Useful when many jobs in one workflow each run the action and you only want the
+  table once (our own CI uses it so a run shows one table, not one per job).
 - **Secure diagnostics line** in the summary: reports which resolution path
   actually fired (`forwarder on/off · captured DNS records N · getaddrinfo route
   … · named X/Y destinations`) so a run that comes back as bare IPs is triagable.
