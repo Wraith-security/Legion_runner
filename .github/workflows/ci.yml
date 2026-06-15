@@ -90,7 +90,7 @@ jobs:
         run: node "$GITHUB_WORKSPACE/action/report.js" emit "$RUNNER_TEMP/legion-report.json"
       - name: Upload egress report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: legion-egress-${{ github.job }}
           path: ${{ runner.temp }}/legion-report.json
@@ -127,7 +127,7 @@ jobs:
         run: node "$GITHUB_WORKSPACE/action/report.js" emit "$RUNNER_TEMP/legion-report.json"
       - name: Upload egress report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: legion-egress-${{ github.job }}
           path: ${{ runner.temp }}/legion-report.json
@@ -156,7 +156,7 @@ jobs:
         run: node "$GITHUB_WORKSPACE/action/report.js" emit "$RUNNER_TEMP/legion-report.json"
       - name: Upload egress report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: legion-egress-${{ github.job }}
           path: ${{ runner.temp }}/legion-report.json
@@ -191,7 +191,7 @@ jobs:
         run: node "$GITHUB_WORKSPACE/action/report.js" emit "$RUNNER_TEMP/legion-report.json"
       - name: Upload egress report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: legion-egress-${{ github.job }}
           path: ${{ runner.temp }}/legion-report.json
@@ -220,7 +220,7 @@ jobs:
         run: node "$GITHUB_WORKSPACE/action/report.js" emit "$RUNNER_TEMP/legion-report.json"
       - name: Upload egress report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: legion-egress-${{ github.job }}
           path: ${{ runner.temp }}/legion-report.json
@@ -237,7 +237,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Download per-job egress reports
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: legion-egress-*
           path: legion-reports
