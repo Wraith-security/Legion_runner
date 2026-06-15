@@ -38,7 +38,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Harden runner (Legion)
-        uses: OpenSource-For-Freedom/legion_runner@v1   # Marketplace action
+        uses: OpenSource-For-Freedom/legion_runner@v1.0.33   # Marketplace action
         with:
           # audit (monitor, don't firewall) + dns-capture ON to NAME destinations:
           # @v1 (>= 1.0.35) carries the teardown + systemd-resolved fixes, so
@@ -104,7 +104,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Harden runner (Legion)
-        uses: OpenSource-For-Freedom/legion_runner@v1   # dogfood our own action (audit)
+        uses: OpenSource-For-Freedom/legion_runner@v1.0.33   # dogfood our own action (audit)
         with:
           egress-policy: audit       # monitor only; never breaks the build
           ebpf: 'off'
@@ -140,7 +140,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Harden runner (Legion)
-        uses: OpenSource-For-Freedom/legion_runner@v1   # dogfood our own action (audit)
+        uses: OpenSource-For-Freedom/legion_runner@v1.0.33   # dogfood our own action (audit)
         with:
           egress-policy: audit
           ebpf: 'off'
@@ -169,7 +169,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Harden runner (Legion)
-        uses: OpenSource-For-Freedom/legion_runner@v1   # dogfood our own action (audit)
+        uses: OpenSource-For-Freedom/legion_runner@v1.0.33   # dogfood our own action (audit)
         with:
           egress-policy: audit
           ebpf: 'off'
@@ -204,7 +204,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Harden runner (Legion)
-        uses: OpenSource-For-Freedom/legion_runner@v1   # dogfood our own action (audit)
+        uses: OpenSource-For-Freedom/legion_runner@v1.0.33   # dogfood our own action (audit)
         with:
           egress-policy: audit
           ebpf: 'off'
