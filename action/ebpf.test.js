@@ -4,7 +4,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { parseConnect, parseSha256, sha256, releaseAsset } = require("./ebpf.js");
+const { parseConnect, parseSha256, sha256 } = require("./ebpf.js");
 
 test("parseConnect reads ip/port/pid/comm", () => {
   assert.deepEqual(parseConnect("LEGIONC 140.82.114.3 443 1234 curl"), {
@@ -41,17 +41,4 @@ test("parseSha256 extracts the digest from sidecar formats", () => {
 test("sha256 matches node crypto for a known input", () => {
   // echo -n "" | sha256sum
   assert.equal(sha256(Buffer.from("")), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
-});
-
-test("releaseAsset maps arch+libc to the right agent asset", () => {
-  const base =
-    "https://github.com/OpenSource-For-Freedom/legion_runner/releases/latest/download";
-  // x86_64-glibc keeps the legacy un-suffixed name (non-breaking).
-  assert.equal(releaseAsset("x64", "gnu"), `${base}/legionr-bpf`);
-  // Everything else is suffixed by <arch>-<libc>.
-  assert.equal(releaseAsset("x64", "musl"), `${base}/legionr-bpf-x86_64-musl`);
-  assert.equal(releaseAsset("arm64", "gnu"), `${base}/legionr-bpf-aarch64-gnu`);
-  assert.equal(releaseAsset("arm64", "musl"), `${base}/legionr-bpf-aarch64-musl`);
-  // Unsupported architectures resolve to null (caller falls back to sampler).
-  assert.equal(releaseAsset("ia32", "gnu"), null);
 });

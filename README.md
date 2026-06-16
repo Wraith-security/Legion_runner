@@ -341,48 +341,6 @@ Verify the unit's exposure with `systemd-analyze security legionr@default`.
 - `curl`, `tar`; optionally `podman` or `docker` for the per-job sandbox.
 - A GitHub PAT (or app token) with permission to manage runners on the scope.
 
-## Platform support
-
-Legion ships a **fully static (musl) Linux binary** that runs on any glibc *or*
-musl distribution with no glibc version floor, plus native-glibc builds. Every
-push runs the binaries inside each supported distro on both architectures (see
-[`platform.yml`](.github/workflows/platform.yml)); the full breakdown — and what
-each capability needs — lives in **[PLATFORMS.md](PLATFORMS.md)**.
-
-Legend: ✅ **fully tested** (exercised in CI on every change) · 🧪 **under
-testing** (builds and runs, not yet in the automated gate) · ❌ not a target.
-
-| OS (libc) | x86_64 | aarch64 | Package mgr |
-|---|:---:|:---:|---|
-| **Debian** 12/13 (glibc) | ✅ | ✅ | apt |
-| **RHEL** 9 / Alma / Rocky / Fedora (glibc) | ✅ | ✅ | dnf |
-| **Alpine** 3.x (musl) | ✅ | ✅ | apk |
-| **Wolfi** (glibc) | ✅ | ✅ | apk |
-| **Ubuntu** (GitHub-hosted, glibc) | ✅ +eBPF | 🧪 | apt |
-| **iSH** (Alpine on iPhone) | ❌ | ❌ | — |
-
-| Capability | Status |
-|---|---|
-| `legionr` control plane (provision / harden / doctor / run) | ✅ all platforms above |
-| `legionr-fim` file-integrity engine | ✅ all platforms above |
-| `/proc` egress sampler (audit mode) | ✅ all platforms above |
-| nftables default-deny enforcement (block mode) | ✅ where `nft` is present |
-| eBPF socket-layer capture + **process attribution** | ✅ x86_64-glibc · 🧪 musl & aarch64 |
-
-> **Fully tested on —** Debian 12, RHEL 9 (AlmaLinux), Alpine 3.20, Wolfi —
-> `x86_64` and `aarch64`.
-> **Under testing —** the eBPF agent (`legionr-bpf`) on musl and on `aarch64`;
-> until those land, those hosts capture egress via the `/proc` sampler (no
-> regression — same data, minus per-process names).
->
-> **iSH is not a target.** It's a 32-bit x86 syscall emulator on the iOS kernel,
-> not Linux: no kernel BTF (no eBPF), no netfilter (no enforcement), and an empty
-> `/proc/net` (nothing for the sampler to read). **Wolfi uses glibc**, not musl —
-> use the glibc binary there even though it shares Alpine's `apk`.
-
-Probe any host yourself: `make platform-audit` (or
-`./scripts/platform-audit.sh`).
-
 ## Build & test
 
 ```bash

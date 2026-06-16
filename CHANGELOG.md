@@ -12,20 +12,6 @@ Unreleased section.
 ## [Unreleased]
 
 ### Added
-- **Multi-platform support (Debian, RHEL, Alpine, Wolfi · x86_64 + aarch64)**: a
-  fully static **musl** build of `legionr` + `legionr-fim` that runs on any glibc
-  *or* musl distro with no glibc version floor, plus native `-gnu` builds. The
-  release now publishes arch+libc-suffixed binaries (`legionr-<arch>-<libc>`,
-  `legionr-fim` likewise), and the Action auto-selects the `legionr-bpf` /
-  `legionr-fim` asset matching the host's architecture and libc (legacy
-  x86_64-glibc names kept for backward-compat). A new `platform.yml` workflow runs
-  the binaries inside Debian, AlmaLinux (RHEL), Alpine, and Wolfi containers on
-  both architectures. See [PLATFORMS.md](PLATFORMS.md). The eBPF
-  process-attribution agent is fully tested on x86_64-glibc; on musl/aarch64
-  capture falls back to the `/proc` sampler (under testing). iSH (iPhone) is
-  explicitly **not** a target (no Linux kernel).
-- **`scripts/platform-audit.sh` / `make platform-audit`**: probe a host's eBPF /
-  nftables / sampler / systemd capabilities and run `legionr doctor`.
 - **Curated egress presets (`allowed-presets`)**: opt-in per-ecosystem allowlists
   (npm, yarn, pnpm, pip, pypi, cargo, rust, go, maven, gradle, nuget, apt, debian,
   docker) so block mode "just works" for common toolchains without hand-listing
