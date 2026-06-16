@@ -21,8 +21,26 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { execFileSync } = require("node:child_process");
 
-const RELEASE_BIN =
-  "https://github.com/OpenSource-For-Freedom/legion_runner/releases/latest/download/legionr-fim";
+const RELEASE_BASE =
+  "https://github.com/OpenSource-For-Freedom/legion_runner/releases/latest/download";
+
+// Map Node's arch to the Rust target arch; detect glibc vs musl (Alpine).
+const ARCH = { x64: "x86_64", arm64: "aarch64" };
+function detectLibc() {
+  try {
+    return process.report.getReport().header.glibcVersionRuntime ? "gnu" : "musl";
+  } catch {
+    return "gnu";
+  }
+}
+// Release asset URL for this host's arch+libc, or null if unsupported. x86_64-gnu
+// keeps the original un-suffixed name so existing releases resolve unchanged.
+function releaseAsset(arch = process.arch, libc = detectLibc()) {
+  const a = ARCH[arch];
+  if (!a) return null;
+  if (a === "x86_64" && libc === "gnu") return `${RELEASE_BASE}/legionr-fim`;
+  return `${RELEASE_BASE}/legionr-fim-${a}-${libc}`;
+}
 
 const sha256 = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
 // Extract the 64-hex digest from a `sha256sum` sidecar or bare hash. Pure (tested).
@@ -59,21 +77,24 @@ function binPath() {
   }
 }
 
-// Resolve a usable binary: a local one, else best-effort download of the latest
-// release asset (x86_64 glibc Linux). Returns a path or null — callers skip FIM
-// on null. No kernel/BTF requirement (pure userspace file hashing).
+// Resolve a usable binary: a local one, else best-effort download of the release
+// asset matching THIS host's arch+libc (x86_64/aarch64 × glibc/musl). Returns a
+// path or null — callers skip FIM on null. No kernel/BTF requirement (pure
+// userspace file hashing).
 async function ensureBinary() {
   const local = binPath();
   if (local) return local;
-  if (process.platform !== "linux" || process.arch !== "x64") return null;
+  if (process.platform !== "linux") return null;
+  const url = releaseAsset();
+  if (!url) return null; // unsupported arch
   if (typeof fetch !== "function") return null;
   try {
-    const res = await fetch(RELEASE_BIN, { redirect: "follow" });
+    const res = await fetch(url, { redirect: "follow" });
     if (!res.ok) return null;
     const buf = Buffer.from(await res.arrayBuffer());
     if (buf.length < 1024) return null; // not a real binary (e.g. 404 page)
     // Fail closed on missing/mismatched checksum — we run this binary directly.
-    if (!(await verifyAgainstSidecar(RELEASE_BIN, buf))) return null;
+    if (!(await verifyAgainstSidecar(url, buf))) return null;
     const dest = path.join(os.tmpdir(), "legionr-fim");
     fs.writeFileSync(dest, buf, { mode: 0o755 });
     return dest;

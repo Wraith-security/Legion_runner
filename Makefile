@@ -1,14 +1,29 @@
-.PHONY: build release test lint fmt clippy install harden unit clean help
+.PHONY: build release release-musl platform-audit test lint fmt clippy install harden unit clean help
 
 CARGO ?= cargo
+# Static musl target (Alpine). musl-gcc comes from the `musl-tools` package and
+# targets the host arch, so this works natively on x86_64 and aarch64 runners.
+MUSL_TARGET ?= $(shell uname -m)-unknown-linux-musl
 
 ## Build (debug)
 build:
 	$(CARGO) build --workspace
 
-## Build (release)
+## Build (release, native glibc — Debian/RHEL/Wolfi)
 release:
 	$(CARGO) build --release -p legionr-cli
+
+## Build static musl release (Alpine). Needs: rustup target + musl-tools.
+release-musl:
+	rustup target add $(MUSL_TARGET)
+	CC_$(subst -,_,$(MUSL_TARGET))=musl-gcc \
+	CARGO_TARGET_$(shell echo $(MUSL_TARGET) | tr 'a-z-' 'A-Z_')_LINKER=musl-gcc \
+	$(CARGO) build --release -p legionr-cli -p legionr-fim --target $(MUSL_TARGET)
+	@echo "static binaries → target/$(MUSL_TARGET)/release/{legionr,legionr-fim}"
+
+## Audit this host's platform capabilities (eBPF/nft/sampler/systemd).
+platform-audit:
+	@./scripts/platform-audit.sh
 
 ## Run all tests
 test:
@@ -52,9 +67,11 @@ clean:
 ## Show this help
 help:
 	@echo "Legion Runner — targets:"
-	@echo "  make build      Debug build"
-	@echo "  make release    Release build of legionr"
-	@echo "  make test       Run workspace tests"
+	@echo "  make build         Debug build"
+	@echo "  make release       Release build of legionr (native glibc)"
+	@echo "  make release-musl  Static musl build (Alpine), legionr + legionr-fim"
+	@echo "  make platform-audit  Probe this host's capabilities"
+	@echo "  make test          Run workspace tests"
 	@echo "  make lint       fmt --check + clippy -D warnings"
 	@echo "  make install    Install on this host (sudo)"
 	@echo "  make harden     Apply host hardening (sudo)"
