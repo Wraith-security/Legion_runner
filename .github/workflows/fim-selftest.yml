@@ -26,7 +26,7 @@ jobs:
     name: Snapshot → tamper → detect
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Harden runner (Legion)
         uses: OpenSource-For-Freedom/legion_runner@v1.0.37   # dogfood our own action (audit)
         with:
