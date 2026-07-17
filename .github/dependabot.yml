@@ -12,7 +12,7 @@ version: 2
 #     dependabot-auto-merge.yml) and a separate major group (left for review).
 updates:
   # ── Rust: main workspace (legionr-core, legionr-cli, legionr-fim) ──────────
-  - package-ecosystem: cargo
+  - package-ecosystem: npm
     directory: "/"
     schedule:
       interval: weekly

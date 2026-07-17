@@ -38,7 +38,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Harden runner (Legion)
-        uses: OpenSource-For-Freedom/legion_runner@v1   # Marketplace action
+        uses: OpenSource-For-Freedom/legion_runner@v1.0.37   # Marketplace action
         with:
           # audit (monitor, don't firewall) + dns-capture ON to NAME destinations:
           # @v1 (>= 1.0.35) carries the teardown + systemd-resolved fixes, so
@@ -90,7 +90,7 @@ jobs:
         run: node "$GITHUB_WORKSPACE/action/report.js" emit "$RUNNER_TEMP/legion-report.json"
       - name: Upload egress report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: legion-egress-${{ github.job }}
           path: ${{ runner.temp }}/legion-report.json
@@ -104,7 +104,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Harden runner (Legion)
-        uses: OpenSource-For-Freedom/legion_runner@v1   # dogfood our own action (audit)
+        uses: OpenSource-For-Freedom/legion_runner@v1.0.37   # dogfood our own action (audit)
         with:
           egress-policy: audit       # monitor only; never breaks the build
           ebpf: 'auto'
@@ -127,7 +127,7 @@ jobs:
         run: node "$GITHUB_WORKSPACE/action/report.js" emit "$RUNNER_TEMP/legion-report.json"
       - name: Upload egress report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: legion-egress-${{ github.job }}
           path: ${{ runner.temp }}/legion-report.json
@@ -140,7 +140,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Harden runner (Legion)
-        uses: OpenSource-For-Freedom/legion_runner@v1   # dogfood our own action (audit)
+        uses: OpenSource-For-Freedom/legion_runner@v1.0.37   # dogfood our own action (audit)
         with:
           egress-policy: audit
           ebpf: 'auto'
@@ -156,7 +156,7 @@ jobs:
         run: node "$GITHUB_WORKSPACE/action/report.js" emit "$RUNNER_TEMP/legion-report.json"
       - name: Upload egress report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: legion-egress-${{ github.job }}
           path: ${{ runner.temp }}/legion-report.json
@@ -169,7 +169,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Harden runner (Legion)
-        uses: OpenSource-For-Freedom/legion_runner@v1   # dogfood our own action (audit)
+        uses: OpenSource-For-Freedom/legion_runner@v1.0.37   # dogfood our own action (audit)
         with:
           egress-policy: audit
           ebpf: 'auto'
@@ -180,7 +180,7 @@ jobs:
       # compiles it and pulls its whole dependency tree from crates.io — one
       # flaky download there fails the job, as it did with a transient TLS EOF).
       - name: Install cargo-audit (prebuilt)
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.81.10
         with:
           tool: cargo-audit
       - name: Audit dependencies
@@ -191,7 +191,7 @@ jobs:
         run: node "$GITHUB_WORKSPACE/action/report.js" emit "$RUNNER_TEMP/legion-report.json"
       - name: Upload egress report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: legion-egress-${{ github.job }}
           path: ${{ runner.temp }}/legion-report.json
@@ -204,7 +204,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Harden runner (Legion)
-        uses: OpenSource-For-Freedom/legion_runner@v1   # dogfood our own action (audit)
+        uses: OpenSource-For-Freedom/legion_runner@v1.0.37   # dogfood our own action (audit)
         with:
           egress-policy: audit
           ebpf: 'auto'
@@ -220,7 +220,7 @@ jobs:
         run: node "$GITHUB_WORKSPACE/action/report.js" emit "$RUNNER_TEMP/legion-report.json"
       - name: Upload egress report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: legion-egress-${{ github.job }}
           path: ${{ runner.temp }}/legion-report.json
@@ -237,7 +237,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Download per-job egress reports
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: legion-egress-*
           path: legion-reports
