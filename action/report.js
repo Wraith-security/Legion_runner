@@ -158,7 +158,7 @@ async function collect(st) {
 // it, a package-repositories roll-up, and a per-job diagnostics block.
 function renderReport(reports) {
   const LOGO =
-    "https://raw.githubusercontent.com/OpenSource-For-Freedom/legion_runner/main/assets/logo.jpg";
+    "https://raw.githubusercontent.com/Wraith-security/legion_runner/main/assets/logo.jpg";
   let md = `<div align="center"><img src="${LOGO}" alt="Legion" width="120"/></div>\n\n`;
   md += "## 🛡 Legion Runner: outbound connections (all jobs)\n\n";
 

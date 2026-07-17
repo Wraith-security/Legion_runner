@@ -5,7 +5,7 @@
   <p><em>Harden any GitHub Actions runner: monitor and block egress, detect tampering, attribute connections to processes. Open, dependency-free Action, runs on Linux.</em></p>
   <p>
     <a href="https://github.com/marketplace/actions/legion-harden-runner"><img src="https://img.shields.io/badge/Marketplace-Legion%20Runner-2ea44f?logo=github" alt="GitHub Marketplace"></a>
-    <a href="https://github.com/OpenSource-For-Freedom/legion_runner/releases/latest"><img src="https://img.shields.io/badge/release-latest-22c55e?logo=github" alt="Latest release"></a>
+    <a href="https://github.com/Wraith-security/legion_runner/releases/latest"><img src="https://img.shields.io/badge/release-latest-22c55e?logo=github" alt="Latest release"></a>
     <img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT">
   </p>
 </div>
@@ -37,7 +37,7 @@ runners) and it:
 
 ```yaml
 steps:
-  - uses: OpenSource-For-Freedom/legion_runner@v1   # first step
+  - uses: Wraith-security/legion_runner@v1   # first step
     with:
       egress-policy: block
       allowed-presets: cargo        # curated per-ecosystem allowlists
@@ -119,7 +119,7 @@ external service), and **file-integrity / tamper detection**.
 
 ```yaml
 steps:
-  - uses: OpenSource-For-Freedom/legion_runner@v1   # Legion Runner
+  - uses: Wraith-security/legion_runner@v1   # Legion Runner
     with:
       egress-policy: audit          # "audit" (monitor only) or "block" (default-deny)
       allowed-endpoints: |          # used in block mode
@@ -131,7 +131,7 @@ steps:
 
 > **Pinning:** `@v1` always resolves to the latest `1.x` release. For stricter
 > supply-chain hygiene, pin to a full commit SHA instead
-> (`uses: OpenSource-For-Freedom/legion_runner@<sha>`) and let Dependabot bump it.
+> (`uses: Wraith-security/legion_runner@<sha>`) and let Dependabot bump it.
 
 At the end of the job you get this (the **Process** column appears when the eBPF
 agent is active):
@@ -207,7 +207,7 @@ file, no extra workflow, no container. Two ways to drive it:
 `block`. Everything else is denied.
 
 ```yaml
-- uses: OpenSource-For-Freedom/legion_runner@v1
+- uses: Wraith-security/legion_runner@v1
   with:
     egress-policy: block
     allowed-presets: cargo        # or list hosts in allowed-endpoints
@@ -326,7 +326,7 @@ sudo ./scripts/install.sh
 
 # 2. Point a runner at a repo or org (token never touches disk)
 export LEGIONR_TOKEN=<github PAT with manage-runners>
-sudo -u legionr -E legionr provision OpenSource-For-Freedom/legion_runner \
+sudo -u legionr -E legionr provision Wraith-security/legion_runner \
      --config /etc/legion-runner/default.json \
      --container podman \
      --link http://127.0.0.1:3000
