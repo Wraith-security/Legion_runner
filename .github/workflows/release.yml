@@ -51,7 +51,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
       - name: Harden runner (Legion)
-        uses: OpenSource-For-Freedom/legion_runner@v1.0.37   # dogfood our own action (audit)
+        uses: OpenSource-For-Freedom/legion_runner@v1.0.41   # dogfood our own action (audit)
         with:
           egress-policy: audit
           ebpf: 'off'
@@ -152,7 +152,7 @@ jobs:
         with:
           ref: ${{ needs.release.outputs.sha }}
       - name: Harden runner (Legion)
-        uses: OpenSource-For-Freedom/legion_runner@v1.0.37   # dogfood our own action (audit)
+        uses: OpenSource-For-Freedom/legion_runner@v1.0.41   # dogfood our own action (audit)
         with:
           egress-policy: audit
           ebpf: 'off'
@@ -193,7 +193,7 @@ jobs:
         with:
           ref: ${{ needs.release.outputs.sha }}
       - name: Harden runner (Legion)
-        uses: OpenSource-For-Freedom/legion_runner@v1.0.37   # dogfood our own action (audit)
+        uses: OpenSource-For-Freedom/legion_runner@v1.0.41   # dogfood our own action (audit)
         with:
           egress-policy: audit
           ebpf: 'off'
