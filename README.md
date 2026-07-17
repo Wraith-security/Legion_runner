@@ -50,6 +50,46 @@ steps:
 > above; the self-hosted platform is documented in
 > [Ephemeral self-hosted runner](#ephemeral-self-hosted-runner).
 
+## How Legion compares
+
+The tool most people weigh this against is **StepSecurity's `harden-runner`** —
+the popular incumbent for egress monitoring on GitHub-hosted runners. Legion's
+angle is to keep everything **on the runner and in the open**:
+
+- **Self-contained — no account, no SaaS, nothing leaves the box.** Every result
+  renders in the **GitHub job summary**; Legion never phones home to a vendor
+  backend. What runs in your CI stays in your CI.
+- **Dependency-free Action.** Pure Node built-ins, no vendored npm packages; the
+  optional eBPF/FIM helpers are single static Rust binaries fetched on demand and
+  **checksum-verified** before they run.
+- **More than an Action.** Legion also ships an **ephemeral, single-use
+  self-hosted runner** control plane (`legionr`) — provision → run one job →
+  teardown — for teams that want to own the whole runner, not just harden a
+  hosted one.
+- **eBPF process attribution, inline.** Socket-layer capture names the *process*
+  behind each connection and prints it in the summary — no dashboard required.
+- **MIT, end to end.** Including the privileged Rust paths you can read and audit.
+
+## What you get
+
+Drop Legion in as the first step and every job gains one combined **egress
+report** in its summary — which destination, reached by which job and process,
+and whether policy allowed it:
+
+```text
+🛡 Legion Runner: outbound connections (all jobs)
+
+| Destination        | Registry  | Reached by (job · process)          | Conns | Decision |
+|--------------------|-----------|-------------------------------------|------:|----------|
+| index.crates.io    | crates.io | rust · cargo, supply-chain · cargo… |    18 | allowed  |
+| registry.npmjs.org | npm       | action · node                       |     5 | allowed  |
+| github.com         | —         | security · —                        |     2 | allowed  |
+```
+
+Flip `egress-policy: block` and anything not on the allowlist is denied at the
+firewall — with a `🔏 File integrity` table alongside if a credential, config, or
+source file was tampered with mid-run.
+
 ## Why Rust?
 
 A security tool shouldn't itself become the weak link. The parts of Legion Runner
