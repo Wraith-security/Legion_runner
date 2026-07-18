@@ -3,7 +3,7 @@
 #
 [Unit]
 Description=Legion Runner (ephemeral GitHub Actions runner) %i
-Documentation=https://github.com/tbgor/legion_runner
+Documentation=https://github.com/Wraith-security/legion_runner
 After=network-online.target
 Wants=network-online.target
 # Hard stop if a job wedges; a fresh runner replaces it.

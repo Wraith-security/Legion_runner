@@ -58,7 +58,7 @@ impl<'a> HardeningProfile<'a> {
         format!(
             "[Unit]\n\
              Description=Legion Runner (ephemeral GitHub Actions runner) %i\n\
-             Documentation=https://github.com/tbgor/legion_runner\n\
+             Documentation=https://github.com/Wraith-security/legion_runner\n\
              After=network-online.target\n\
              Wants=network-online.target\n\
              # Hard stop if a job wedges; a fresh runner replaces it.\n\

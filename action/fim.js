@@ -22,7 +22,7 @@ const crypto = require("node:crypto");
 const { execFileSync } = require("node:child_process");
 
 const RELEASE_BIN =
-  "https://github.com/OpenSource-For-Freedom/legion_runner/releases/latest/download/legionr-fim";
+  "https://github.com/Wraith-security/legion_runner/releases/latest/download/legionr-fim";
 
 const sha256 = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
 // Extract the 64-hex digest from a `sha256sum` sidecar or bare hash. Pure (tested).

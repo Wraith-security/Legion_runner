@@ -16,7 +16,7 @@ version      = "0.1.0"
 edition      = "2021"
 authors      = ["Legion Contributors"]
 license      = "MIT"
-repository   = "https://github.com/tbgor/legion_runner"
+repository   = "https://github.com/Wraith-security/legion_runner"
 description  = "Legion Runner – hardened, ephemeral, single-use GitHub Actions runner for Linux"
 
 [workspace.dependencies]

@@ -1015,7 +1015,7 @@ async function post() {
   const captureLayer = usedEbpf ? "eBPF (sys_enter_connect)" : "/proc sampler";
   const captureMode = st.dns && st.dns.active ? "DNS capture" : "reverse DNS";
   const LOGO =
-    "https://raw.githubusercontent.com/OpenSource-For-Freedom/legion_runner/main/assets/logo.jpg";
+    "https://raw.githubusercontent.com/Wraith-security/legion_runner/main/assets/logo.jpg";
   let md = `<div align="center"><img src="${LOGO}" alt="Legion" width="120"/></div>\n\n`;
   md += "## 🛡 Legion Runner: outbound connections\n\n";
   md += `**Egress policy:** \`${st.policy}\`${st.enforced ? " (enforced)" : ""}  ·  `;
