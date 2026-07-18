@@ -143,7 +143,7 @@ steps:
 At the end of the job you get this (the **Process** column appears when the eBPF
 agent is active):
 
-> ## 🛡 Legion Runner: outbound connections
+> ## Legion Runner: outbound connections
 > **Capture:** eBPF (sys_enter_connect) · **Resolution:** DNS capture
 > <sub>**Diagnostics:** forwarder on · captured DNS records 31 · getaddrinfo route systemd-resolved · named 4/4 destinations</sub>
 >
