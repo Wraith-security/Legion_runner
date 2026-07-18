@@ -37,7 +37,7 @@ runners) and it:
 
 ```yaml
 steps:
-  - uses: OpenSource-For-Freedom/legion_runner@v1   # first step
+  - uses: wraith-security/legion_runner@v1   # first step
     with:
       egress-policy: block
       allowed-presets: cargo        # curated per-ecosystem allowlists
@@ -119,7 +119,7 @@ external service), and **file-integrity / tamper detection**.
 
 ```yaml
 steps:
-  - uses: OpenSource-For-Freedom/legion_runner@v1   # Legion Runner
+  - uses:wraith-security/legion_runner@v1   # Legion Runner
     with:
       egress-policy: audit          # "audit" (monitor only) or "block" (default-deny)
       allowed-endpoints: |          # used in block mode
