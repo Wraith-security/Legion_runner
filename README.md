@@ -283,7 +283,7 @@ The action above hardens *any* runner. This repo also ships a full **ephemeral,
 single-use self-hosted runner** platform: a Rust control plane (`legionr`) that
 mints just-in-time runner credentials and supervises the lifecycle, a Bash +
 systemd backbone that locks the host down, and an optional **Legion link** that
-heartbeats every runner's lifecycle to the [Legion](https://github.com/OpenSource-For-Freedom/legion)
+heartbeats every runner's lifecycle to the [Legion](https://github.com/Wraith-security/legion)
 desktop dashboard. It's an optional, separate product; you don't need it to use
 the Action.
 
