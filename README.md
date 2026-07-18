@@ -188,6 +188,7 @@ bare IPs is triagable without leaking infrastructure detail.
 | `allow-github` | `true` | Always allow GitHub + Actions endpoints. |
 | `dns-capture` | `true` | Route the resolver through a local logger to map connections to the **exact domains** the job resolved (more accurate than reverse DNS). Falls back to reverse DNS if unprivileged. |
 | `ebpf` | `auto` | `auto` uses the Rust/aya eBPF agent for socket-layer capture + process attribution (local binary, else a verified download of the latest release asset); `off` disables it. Falls back to the `/proc` sampler. |
+| `sample-interval` | `3` | Seconds between egress samples taken by the monitor. |
 | `policy-file` | `.legion/egress-allowed.txt` | Committed allowlist (learn then enforce). |
 | `learn` | `false` | In audit mode, write the observed destinations to `policy-file`. |
 | `learned-baseline` | `true` | In block mode, also allow destinations learned into the Actions cache. Set `false` to enforce only the explicit allowlist. |
