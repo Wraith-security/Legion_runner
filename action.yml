@@ -1,7 +1,8 @@
 name: 'Legion Runner'
 description: >-
-  Hardened egress filtering and runtime network monitoring for GitHub Actions
-  jobs. Open-source, dependency-free, and ephemeral.
+  Stop CI supply chain attacks at the network layer. Legion records and blocks
+  every outbound connection from a GitHub Actions job and names the process
+  behind it. Open source, self contained, no account, no data leaves the runner.
 author: 'Legion'
 branding:
   icon: 'shield'

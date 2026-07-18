@@ -1,8 +1,8 @@
 <div align="center">
   <img src="assets/rust.PNG" alt="Legion Runner" width="420"/>
   <h1>Legion Runner</h1>
-  <p><strong>"Not your standard Actions Runner" - Legion</strong></p>
-  <p><em>Harden any GitHub Actions runner: monitor and block egress, detect tampering, attribute connections to processes. Open, dependency-free Action, runs on Linux.</em></p>
+  <p><strong>The strongest open defense against CI supply chain attacks.</strong></p>
+  <p><em>Legion watches every outbound connection from a GitHub Actions job, names the process behind it, and blocks anything you have not allowed. Open source. Self contained. Nothing leaves the runner.</em></p>
   <p>
     <a href="https://github.com/marketplace/actions/legion-harden-runner"><img src="https://img.shields.io/badge/Marketplace-Legion%20Runner-2ea44f?logo=github" alt="GitHub Marketplace"></a>
     <a href="https://github.com/Wraith-security/legion_runner/releases/latest"><img src="https://img.shields.io/badge/release-latest-22c55e?logo=github" alt="Latest release"></a>
@@ -19,21 +19,26 @@
 
 ---
 
-**Legion Runner is a GitHub Action that hardens your CI.** It's an open
-alternative to proprietary runner-hardening agents, and the Action itself is
-dependency-free — pure Node built-ins, no vendored npm packages. (Its optional
-eBPF capture and file-integrity helpers are single static Rust binaries, fetched
-on demand.) Drop it in as the first step of any job (including GitHub-hosted
-runners) and it:
+**Legion Runner hardens your CI against supply chain attacks.** A compromised
+Action or a poisoned dependency does one thing when it fires. It opens a network
+connection and sends your secrets somewhere. Legion sits in front of that. It
+records every outbound connection from the job, names the process that opened it,
+and blocks any destination you have not put on the allowlist.
 
-- **Monitors and optionally blocks outbound network traffic.** Audit every egress
-  connection, or default-deny with an allowlist (`block` mode). Dynamic
-  allow-by-domain keeps rotating CDN/cloud IPs working.
-- **Detects file tampering.** Snapshots credential/config files, `.git` hooks, and
-  checked-out source at job start, then flags anything overwritten mid-run.
-- **Attributes connections to processes** via a socket-layer eBPF agent
-  (bypass-proof), and prints every outbound connection as a table in the job
-  summary.
+The Action has no dependencies. It runs on pure Node built-ins with no vendored
+npm packages. The optional eBPF capture and file-integrity helpers are single
+static Rust binaries, fetched on demand and checksum-verified before they run.
+Add it as the first step of any job, including GitHub-hosted runners:
+
+- **Records and blocks outbound traffic.** Audit mode logs every egress
+  connection. Block mode enforces a default-deny allowlist at the firewall.
+  Dynamic allow-by-domain keeps rotating CDN and cloud IPs working.
+- **Names the process behind every connection.** A socket-layer eBPF agent reads
+  connections in the kernel, so custom resolvers and hard-coded IPs cannot slip
+  past it, and it ties each connection to the process that opened it.
+- **Catches file tampering.** It fingerprints credential files, config, `.git`
+  hooks, and checked-out source at job start, then reports anything changed by
+  the time the job ends.
 
 ```yaml
 steps:
@@ -52,43 +57,44 @@ steps:
 
 ## How Legion compares
 
-The tool most people weigh this against is **StepSecurity's `harden-runner`** —
-the popular incumbent for egress monitoring on GitHub-hosted runners. Legion's
-angle is to keep everything **on the runner and in the open**:
+Most people weigh this against StepSecurity's `harden-runner`, the popular tool
+for egress monitoring on hosted runners. Legion takes a different position. It
+keeps everything on the runner and in the open.
 
-- **Self-contained — no account, no SaaS, nothing leaves the box.** Every result
-  renders in the **GitHub job summary**; Legion never phones home to a vendor
-  backend. What runs in your CI stays in your CI.
-- **Dependency-free Action.** Pure Node built-ins, no vendored npm packages; the
-  optional eBPF/FIM helpers are single static Rust binaries fetched on demand and
-  **checksum-verified** before they run.
-- **More than an Action.** Legion also ships an **ephemeral, single-use
-  self-hosted runner** control plane (`legionr`) — provision → run one job →
-  teardown — for teams that want to own the whole runner, not just harden a
-  hosted one.
-- **eBPF process attribution, inline.** Socket-layer capture names the *process*
-  behind each connection and prints it in the summary — no dashboard required.
-- **MIT, end to end.** Including the privileged Rust paths you can read and audit.
+- **Nothing leaves the box.** There is no account and no SaaS backend. Every
+  result renders in the GitHub job summary. Legion never sends your CI data to a
+  vendor.
+- **No dependencies.** The Action is pure Node built-ins. The eBPF and
+  file-integrity helpers are single static Rust binaries, checksum-verified
+  before they run.
+- **More than an Action.** Legion also ships an ephemeral, single-use self-hosted
+  runner control plane called `legionr`. It provisions a runner, serves one job,
+  and tears it down. For teams that want to own the whole runner, not just harden
+  a hosted one.
+- **Process attribution inline.** Socket-layer capture names the process behind
+  each connection and prints it in the summary. No dashboard, no external service.
+- **MIT throughout,** including the privileged Rust paths, so you can read and
+  audit every line.
 
 ## What you get
 
-Drop Legion in as the first step and every job gains one combined **egress
-report** in its summary — which destination, reached by which job and process,
-and whether policy allowed it:
+Add Legion as the first step and every job produces one egress report in its
+summary. It shows each destination, the job and process that reached it, and
+whether your policy allowed it:
 
 ```text
-🛡 Legion Runner: outbound connections (all jobs)
+Legion Runner: outbound connections (all jobs)
 
-| Destination        | Registry  | Reached by (job · process)          | Conns | Decision |
+| Destination        | Registry  | Reached by (job / process)          | Conns | Decision |
 |--------------------|-----------|-------------------------------------|------:|----------|
-| index.crates.io    | crates.io | rust · cargo, supply-chain · cargo… |    18 | allowed  |
-| registry.npmjs.org | npm       | action · node                       |     5 | allowed  |
-| github.com         | —         | security · —                        |     2 | allowed  |
+| index.crates.io    | crates.io | rust / cargo, supply-chain / cargo  |    18 | allowed  |
+| registry.npmjs.org | npm       | action / node                       |     5 | allowed  |
+| github.com         | -         | security / -                        |     2 | allowed  |
 ```
 
-Flip `egress-policy: block` and anything not on the allowlist is denied at the
-firewall — with a `🔏 File integrity` table alongside if a credential, config, or
-source file was tampered with mid-run.
+Set `egress-policy: block` and anything off the allowlist is denied at the
+firewall. If a credential, config, or source file is changed mid-run, a file
+integrity table appears next to it.
 
 ## Why Rust?
 
@@ -99,13 +105,13 @@ to catch tampering, are written in Rust, and that choice buys real safety:
 - **Memory-safe by design.** Rust rules out the bug class (buffer overflows,
   use-after-free) behind most exploits in tools written in C. A guard that can't
   be turned into a way in.
-- **One small, fast binary.** No interpreter or runtime to install or update — it
-  compiles to a single static binary (its Rust/aya dependencies built in, pinned,
-  and audited via `cargo-deny`) that drops onto a runner and just works, with
-  little enough overhead to run on every job.
-- **Auditable.** The privileged logic — the egress and tamper-detection paths —
-  lives in compact, compiled code you can read end to end, which is the whole
-  point when you dared someone to decompile it.
+- **One small, fast binary.** There is no interpreter or runtime to install or
+  update. It compiles to a single static binary (its Rust/aya dependencies built
+  in, pinned, and audited via `cargo-deny`) that drops onto a runner and just
+  works, with little enough overhead to run on every job.
+- **Auditable.** The privileged logic, meaning the egress and tamper-detection
+  paths, lives in compact compiled code you can read end to end. That is the
+  whole point when you dared someone to decompile it.
 
 ## Use as a GitHub Action
 
@@ -113,9 +119,10 @@ The action hardens any job, including GitHub-hosted runners. It monitors (and
 optionally blocks) outbound network traffic, then prints every outbound
 connection as a markdown table in the job summary. Features: **socket-layer eBPF
 capture** (process attribution, bypass-proof), **package-repository attribution**
-(names the registries each job reached — npm, PyPI, crates.io, apt, Docker, …),
-**dynamic allow-by-domain** blocking, **self-contained learn-then-enforce** (no
-external service), and **file-integrity / tamper detection**.
+(names the registries each job reached, such as npm, PyPI, crates.io, apt, and
+Docker), **dynamic allow-by-domain** blocking, **self-contained
+learn-then-enforce** (no external service), and **file-integrity and tamper
+detection**.
 
 ```yaml
 steps:
@@ -159,17 +166,17 @@ agent is active):
 
 **Named destinations, and the package repositories you actually reached.** A
 supply-chain attack hides in the registries your build talks to, so a table of
-bare IPs isn't enough — you need to see *which* repositories a job reached. The
-**📦 Package repositories reached** roll-up classifies named destinations into
-their ecosystem (npm, PyPI, crates.io, apt, Docker, Go, …) with the process that
-reached each, so a rogue or unexpected registry is obvious at a glance. Getting
-real names is the hard part on hosted runners: `getaddrinfo` (curl/pip/npm/cargo)
-resolves through systemd-resolved, which ignores a plain `resolv.conf` rewrite —
+bare IPs is not enough. You need to see *which* repositories a job reached. The
+package-repositories roll-up classifies named destinations into their ecosystem
+(npm, PyPI, crates.io, apt, Docker, Go, and more) with the process that reached
+each, so a rogue or unexpected registry is obvious at a glance. Getting real
+names is the hard part on hosted runners. `getaddrinfo` (curl/pip/npm/cargo)
+resolves through systemd-resolved, which ignores a plain `resolv.conf` rewrite,
 so Legion routes those lookups through its capture forwarder (and bare IPs that
 slip through get a CDN/provider hint). The **Diagnostics** line reports which
-resolution path won and how many lookups were captured — counts and enums only,
-never resolver IPs, paths, or hostnames — so a run that comes back as bare IPs is
-triagable without leaking infrastructure detail.
+resolution path won and how many lookups were captured. It records counts and
+enums only, never resolver IPs, paths, or hostnames, so a run that comes back as
+bare IPs is triagable without leaking infrastructure detail.
 
 ### Inputs
 
@@ -177,7 +184,7 @@ triagable without leaking infrastructure detail.
 |-------|---------|-------------|
 | `egress-policy` | `audit` | `audit` (never breaks builds) or `block` (default-deny allowlist). |
 | `allowed-endpoints` | `` | `host` / `host:port` entries to permit in block mode. |
-| `allowed-presets` | `` | Curated ecosystem allowlists (npm, pip, cargo, apt, docker, …) to permit in block mode. |
+| `allowed-presets` | `` | Curated ecosystem allowlists (npm, pip, cargo, apt, docker, and more) to permit in block mode. |
 | `allow-github` | `true` | Always allow GitHub + Actions endpoints. |
 | `dns-capture` | `true` | Route the resolver through a local logger to map connections to the **exact domains** the job resolved (more accurate than reverse DNS). Falls back to reverse DNS if unprivileged. |
 | `ebpf` | `auto` | `auto` uses the Rust/aya eBPF agent for socket-layer capture + process attribution (local binary, else a verified download of the latest release asset); `off` disables it. Falls back to the `/proc` sampler. |
@@ -186,7 +193,7 @@ triagable without leaking infrastructure detail.
 | `learned-baseline` | `true` | In block mode, also allow destinations learned into the Actions cache. Set `false` to enforce only the explicit allowlist. |
 | `file-integrity` | `auto` | Detect file tampering during the job (Rust `legionr-fim` agent): credential/config files, `.git` config + hooks, and checked-out source. `auto` or `off`. |
 | `fim-extra-paths` | `` | Extra files to watch for tampering (one per line / comma-separated). |
-| `job-summary` | `true` | Write the connections table to the job summary. Set `false` to keep monitoring/enforcement active but suppress the table — handy when many jobs in one workflow each harden and you only want the summary once. |
+| `job-summary` | `true` | Write the connections table to the job summary. Set `false` to keep monitoring and enforcement active but suppress the table. Useful when many jobs in one workflow each harden and you only want the summary once. |
 | `disable-sudo` | `false` | Revoke the runner user's sudo after setup. |
 | `disable-telemetry` | `false` | Suppress lifecycle events (stay fully local). |
 | `legion-link` | `` | Stream egress events to a Legion desktop endpoint. |
@@ -248,7 +255,7 @@ default), the Rust `legionr-fim` agent snapshots the high-value tamper targets a
 job start and diffs them at job end:
 
 - **Sensitive:** credential/config files (`~/.ssh/*`, `~/.npmrc`, `~/.netrc`,
-  `~/.docker/config.json`, `~/.aws/*`, `~/.gitconfig`, …), plus the repo's
+  `~/.docker/config.json`, `~/.aws/*`, `~/.gitconfig`, and similar), plus the repo's
   `.git/config` and `.git/hooks`. Any change here is high-signal.
 - **Source:** files already present in the workspace at job start. A change means
   a checked-out file was overwritten or deleted mid-run (active when the action
