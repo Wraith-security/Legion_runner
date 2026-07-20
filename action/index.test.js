@@ -32,6 +32,20 @@ test("normalizeIp maps IPv4-mapped IPv6 to plain IPv4", () => {
   assert.equal(normalizeIp("2606:4700:ffff::1"), "2606:4700:ffff::1");
 });
 
+test("normalizeIp folds expanded IPv6 to the canonical form the eBPF agent emits", () => {
+  // The DNS-capture forwarder logs answers in EXPANDED form; the eBPF/proc
+  // capture uses COMPRESSED form. Both must key the map identically or the name
+  // never attaches and the destination shows as a bare IP.
+  assert.equal(normalizeIp("2606:50c0:0:0:0:0:0:153"), "2606:50c0::153");
+  assert.equal(normalizeIp("2606:50c0::153"), "2606:50c0::153"); // already canonical
+  assert.equal(normalizeIp("2620:0000:0861:0000:0000:0000:0000:0100"), "2620:0:861::100");
+  assert.equal(normalizeIp("[2a04:4e42:0000:0000:0000:0000:0000:0223]"), "2a04:4e42::223");
+  // leading zeros within a group are stripped; single zero group is not "::"'d
+  assert.equal(normalizeIp("2001:0db8:0000:0042:0000:0000:0000:0001"), "2001:db8:0:42::1");
+  // loopback/unspecified stay canonical so isLocal still matches them
+  assert.equal(normalizeIp("0:0:0:0:0:0:0:1"), "::1");
+});
+
 test("splitPeer handles ipv4, bracketed ipv6, and bare", () => {
   assert.deepEqual(splitPeer("140.82.114.21:443"), { ip: "140.82.114.21", port: "443" });
   assert.deepEqual(splitPeer("[2606:50c0::153]:443"), { ip: "2606:50c0::153", port: "443" });

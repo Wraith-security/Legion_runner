@@ -20,15 +20,21 @@ const path = require("node:path");
 const dnsp = require("node:dns").promises;
 const ebpf = require("./ebpf.js");
 const repos = require("./repos.js");
-const { normalizeIp, isLocal, splitPeer, decisionFor, readDnsMap } = require("./index.js");
+const { normalizeIp, isLocal, splitPeer, decisionFor, readDnsMap, realUpstream } = require("./index.js");
 
 const STATE_FILE = path.join(os.tmpdir(), "legion-harden-state.json");
 
-// PTR a single IP with a hard timeout (mirrors index.js reverseLookup).
+// PTR a single IP with a hard timeout (mirrors index.js reverseLookup). Queries
+// the REAL upstream resolver, not the ambient one, which during/after capture
+// points at the local forwarder and would stall the lookup.
 async function reverseLookup(ip) {
   try {
+    const { Resolver } = dnsp;
+    const r = new Resolver({ timeout: 2000, tries: 1 });
+    const up = realUpstream();
+    if (up) r.setServers([up]);
     const names = await Promise.race([
-      dnsp.reverse(ip),
+      r.reverse(ip),
       new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 2500)),
     ]);
     return names && names.length ? names[0].replace(/\.$/, "") : null;
