@@ -20,6 +20,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege: every job only reads the repo. No job needs to write contents,
+# move tags, or edit releases, so the default token is narrowed to read-only.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1

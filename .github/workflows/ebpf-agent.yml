@@ -20,6 +20,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege: this self-test only reads the repo.
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build & test legionr-bpf
