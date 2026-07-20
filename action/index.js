@@ -769,6 +769,17 @@ function stopDnsCapture(dns) {
 /// so signalling the launcher pid may not reach the real process — ALWAYS also
 /// pkill it by name (the binary is `legionr-bpf`, not bpftrace). A leaked root
 /// agent keeps the hosted runner from finalizing the job ("Complete job" hangs).
+// Kill the eBPF agent by NAME (needs no state). Bracket the first char so pkill
+// doesn't match its own command line and race-kill its sudo parent, leaving the
+// root agent alive.
+function killEbpfByName() {
+  try {
+    sudo(["pkill", "-9", "-f", "[l]egionr-bpf"]);
+  } catch {
+    /* nothing to kill / pkill absent */
+  }
+}
+
 function stopEbpf(cap) {
   if (!cap || !cap.active) return;
   if (cap.pid) {
@@ -778,13 +789,7 @@ function stopEbpf(cap) {
       /* fall through to pkill */
     }
   }
-  try {
-    // Bracket the first char ([l]egionr-bpf) so pkill doesn't match its own
-    // command line and race-kill its sudo parent, leaving the root agent alive.
-    sudo(["pkill", "-9", "-f", "[l]egionr-bpf"]);
-  } catch {
-    /* nothing to kill / pkill absent */
-  }
+  killEbpfByName();
 }
 
 // ── main ────────────────────────────────────────────────────────────────────
@@ -895,6 +900,10 @@ async function main() {
       enforced = true;
       info(`   enforced default-deny egress (seeded ${v4.length + v6.length} allowlisted IPs)`);
     } catch (e) {
+      // Roll back any partially-applied rules so a half-built default-deny chain
+      // isn't left jumped from OUTPUT (which would drop the runner's own egress
+      // and hang finalization with no teardown scheduled).
+      removeEgressBlock();
       setFailed(`block mode requested but firewall setup failed: ${e.message}`);
       return;
     }
@@ -959,7 +968,16 @@ async function post() {
   try {
     st = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
   } catch {
-    return; // nothing to report (e.g. non-Linux skip)
+    // No parseable state: main() may have died mid-setup, or an untrusted job
+    // deleted/corrupted the (job-writable, /tmp) state file. We can't do a
+    // targeted restore, but the block-mode firewall MUST come down and the root
+    // daemons MUST die or the runner hangs at finalization and later jobs on a
+    // persistent runner stay blocked. All three are keyed by chain/process NAME,
+    // so they run without any state. Best-effort; each is idempotent.
+    removeEgressBlock();
+    killDnsForwarder();
+    killEbpfByName();
+    return;
   }
 
   // Stop the background daemons. The monitor is a pure /proc reader (no
