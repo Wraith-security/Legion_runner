@@ -458,7 +458,20 @@ function readDeniedDestinations() {
 }
 
 function disableSudo() {
-  const user = process.env.USER || "runner";
+  // Use the REAL invoking user (from the uid), never $USER: the env var is job
+  // controlled and was interpolated straight into a sudoers rule, so a value
+  // like "x ALL=(ALL) NOPASSWD: ALL #" would grant root instead of dropping it.
+  let user;
+  try {
+    user = os.userInfo().username;
+  } catch {
+    user = "runner";
+  }
+  // Defense in depth: only a well-formed POSIX username may enter a sudoers rule.
+  if (!/^[a-z_][a-z0-9_-]*\$?$/.test(user)) {
+    warn(`disable-sudo: refusing to write a sudoers rule for unexpected username ${JSON.stringify(user)}`);
+    return;
+  }
   const tmp = path.join(os.tmpdir(), "legion-no-sudo");
   fs.writeFileSync(tmp, `${user} ALL=(ALL) !ALL\n`);
   sudo(["install", "-m", "0440", tmp, "/etc/sudoers.d/99-legion-disable-sudo"]);

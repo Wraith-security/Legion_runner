@@ -112,7 +112,12 @@ if (require.main === module) {
     if (msg.length >= 2) inflight.set(msg.readUInt16BE(0), { addr: rinfo.address, port: rinfo.port });
     client.send(msg, 53, upstream);
   });
-  client.on("message", (msg) => {
+  client.on("message", (msg, rinfo) => {
+    // Only trust replies from the real upstream. The client socket is otherwise
+    // reachable by any local process, so an untrusted job could spray forged DNS
+    // answers to get an attacker IP allow-listed into the firewall (block-mode
+    // bypass) or spoof a resolution. Drop anything not from upstream:53.
+    if (rinfo.address !== upstream || rinfo.port !== 53) return;
     try {
       const r = extract(msg);
       if (r && r.qname && r.ips.length) {
