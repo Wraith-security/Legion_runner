@@ -41,9 +41,25 @@ async function verifyAgainstSidecar(url, buf) {
   }
 }
 
+// A binary is safe to run via sudo (root) only if it is root-owned and not
+// writable by the (untrusted) job user. A non-root job cannot create such a
+// file, so this blocks a job from pointing LEGIONR_BPF at a script it controls
+// and having the action execute it as root.
+function rootOwnedTrusted(p) {
+  try {
+    const st = fs.statSync(p);
+    return st.uid === 0 && (st.mode & 0o022) === 0;
+  } catch {
+    return false;
+  }
+}
+
 // Locate the Rust agent: explicit env, then PATH, then alongside the action.
 function binPath() {
-  if (process.env.LEGIONR_BPF && fs.existsSync(process.env.LEGIONR_BPF)) {
+  // The env var is job-controlled and the agent runs as root, so only honor it
+  // when it points at a root-owned, non-job-writable binary; otherwise ignore it
+  // and fall through to PATH / download.
+  if (process.env.LEGIONR_BPF && rootOwnedTrusted(process.env.LEGIONR_BPF)) {
     return process.env.LEGIONR_BPF;
   }
   try {
