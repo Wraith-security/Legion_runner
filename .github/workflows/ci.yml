@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20   # hard cap: never let a hung job run to the 6h default
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Harden runner (Legion)
         uses: Wraith-security/legion_runner@v1.0.42   # Marketplace action
@@ -68,7 +68,7 @@ jobs:
           components: clippy, rustfmt
 
       - name: Cache cargo
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/bin/
@@ -106,7 +106,7 @@ jobs:
     name: Action unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Harden runner (Legion)
         uses: Wraith-security/legion_runner@v1.0.42   # dogfood our own action (audit)
@@ -116,7 +116,7 @@ jobs:
           dns-capture: 'true'
           job-summary: 'false'   # combined into the egress-report job
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.node-version'
 
@@ -143,7 +143,7 @@ jobs:
     name: Shell scripts
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Harden runner (Legion)
         uses: Wraith-security/legion_runner@v1.0.42   # dogfood our own action (audit)
         with:
@@ -172,7 +172,7 @@ jobs:
     name: Security audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Harden runner (Legion)
         uses: Wraith-security/legion_runner@v1.0.42   # dogfood our own action (audit)
         with:
@@ -207,7 +207,7 @@ jobs:
     name: Supply chain (cargo-deny)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Harden runner (Legion)
         uses: Wraith-security/legion_runner@v1.0.42   # dogfood our own action (audit)
         with:
@@ -240,7 +240,7 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Download per-job egress reports
         uses: actions/download-artifact@v8
         with:
