@@ -152,6 +152,39 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Normalize IPv4-mapped IPv6 (::ffff:1.2.3.4) to plain IPv4 so the two forms
 // dedupe into one destination.
+// Canonicalize an IPv6 string to its RFC 5952 form (lowercase, no leading
+// zeros, longest zero-run compressed to "::"). This is the form the eBPF agent
+// (Rust `Ipv6Addr`) prints, so canonicalizing here lets the DNS-capture map
+// (which the forwarder logs in EXPANDED form) match the captured connect IP.
+// Returns null if the input isn't a parseable IPv6 address.
+function canonicalizeV6(s) {
+  let head, tail;
+  const dbl = s.indexOf("::");
+  if (dbl !== -1) {
+    head = s.slice(0, dbl).split(":").filter(Boolean);
+    tail = s.slice(dbl + 2).split(":").filter(Boolean);
+  } else {
+    head = s.split(":");
+    tail = [];
+  }
+  const missing = 8 - head.length - tail.length;
+  if (dbl === -1 ? head.length !== 8 : missing < 1) return null;
+  const groups = dbl !== -1 ? [...head, ...Array(missing).fill("0"), ...tail] : head;
+  const nums = groups.map((g) => (/^[0-9a-f]{1,4}$/.test(g) ? parseInt(g, 16) : NaN));
+  if (nums.length !== 8 || nums.some((n) => Number.isNaN(n))) return null;
+  const hex = nums.map((n) => n.toString(16));
+  // Longest run of >=2 zero groups (leftmost on a tie) becomes "::".
+  let bestStart = -1, bestLen = 0, curStart = -1, curLen = 0;
+  for (let i = 0; i < 8; i++) {
+    if (nums[i] === 0) {
+      if (curStart === -1) curStart = i;
+      if (++curLen > bestLen) { bestLen = curLen; bestStart = curStart; }
+    } else { curStart = -1; curLen = 0; }
+  }
+  if (bestLen < 2) return hex.join(":");
+  return `${hex.slice(0, bestStart).join(":")}::${hex.slice(bestStart + bestLen).join(":")}`;
+}
+
 function normalizeIp(ip) {
   if (!ip) return ip;
   const low = ip.toLowerCase().replace(/^\[|\]$/g, "");
@@ -165,6 +198,9 @@ function normalizeIp(ip) {
     const lo = parseInt(m[2], 16);
     return [hi >> 8, hi & 0xff, lo >> 8, lo & 0xff].join(".");
   }
+  // Any other IPv6: fold to the canonical compressed form so the DNS-capture
+  // map (expanded) and the eBPF/proc capture (compressed) key the same way.
+  if (low.includes(":")) return canonicalizeV6(low) || ip;
   return ip;
 }
 
@@ -422,7 +458,20 @@ function readDeniedDestinations() {
 }
 
 function disableSudo() {
-  const user = process.env.USER || "runner";
+  // Use the REAL invoking user (from the uid), never $USER: the env var is job
+  // controlled and was interpolated straight into a sudoers rule, so a value
+  // like "x ALL=(ALL) NOPASSWD: ALL #" would grant root instead of dropping it.
+  let user;
+  try {
+    user = os.userInfo().username;
+  } catch {
+    user = "runner";
+  }
+  // Defense in depth: only a well-formed POSIX username may enter a sudoers rule.
+  if (!/^[a-z_][a-z0-9_-]*\$?$/.test(user)) {
+    warn(`disable-sudo: refusing to write a sudoers rule for unexpected username ${JSON.stringify(user)}`);
+    return;
+  }
   const tmp = path.join(os.tmpdir(), "legion-no-sudo");
   fs.writeFileSync(tmp, `${user} ALL=(ALL) !ALL\n`);
   sudo(["install", "-m", "0440", tmp, "/etc/sudoers.d/99-legion-disable-sudo"]);
@@ -720,6 +769,17 @@ function stopDnsCapture(dns) {
 /// so signalling the launcher pid may not reach the real process — ALWAYS also
 /// pkill it by name (the binary is `legionr-bpf`, not bpftrace). A leaked root
 /// agent keeps the hosted runner from finalizing the job ("Complete job" hangs).
+// Kill the eBPF agent by NAME (needs no state). Bracket the first char so pkill
+// doesn't match its own command line and race-kill its sudo parent, leaving the
+// root agent alive.
+function killEbpfByName() {
+  try {
+    sudo(["pkill", "-9", "-f", "[l]egionr-bpf"]);
+  } catch {
+    /* nothing to kill / pkill absent */
+  }
+}
+
 function stopEbpf(cap) {
   if (!cap || !cap.active) return;
   if (cap.pid) {
@@ -729,13 +789,7 @@ function stopEbpf(cap) {
       /* fall through to pkill */
     }
   }
-  try {
-    // Bracket the first char ([l]egionr-bpf) so pkill doesn't match its own
-    // command line and race-kill its sudo parent, leaving the root agent alive.
-    sudo(["pkill", "-9", "-f", "[l]egionr-bpf"]);
-  } catch {
-    /* nothing to kill / pkill absent */
-  }
+  killEbpfByName();
 }
 
 // ── main ────────────────────────────────────────────────────────────────────
@@ -846,6 +900,10 @@ async function main() {
       enforced = true;
       info(`   enforced default-deny egress (seeded ${v4.length + v6.length} allowlisted IPs)`);
     } catch (e) {
+      // Roll back any partially-applied rules so a half-built default-deny chain
+      // isn't left jumped from OUTPUT (which would drop the runner's own egress
+      // and hang finalization with no teardown scheduled).
+      removeEgressBlock();
       setFailed(`block mode requested but firewall setup failed: ${e.message}`);
       return;
     }
@@ -910,7 +968,16 @@ async function post() {
   try {
     st = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
   } catch {
-    return; // nothing to report (e.g. non-Linux skip)
+    // No parseable state: main() may have died mid-setup, or an untrusted job
+    // deleted/corrupted the (job-writable, /tmp) state file. We can't do a
+    // targeted restore, but the block-mode firewall MUST come down and the root
+    // daemons MUST die or the runner hangs at finalization and later jobs on a
+    // persistent runner stay blocked. All three are keyed by chain/process NAME,
+    // so they run without any state. Best-effort; each is idempotent.
+    removeEgressBlock();
+    killDnsForwarder();
+    killEbpfByName();
+    return;
   }
 
   // Stop the background daemons. The monitor is a pure /proc reader (no
@@ -1238,8 +1305,17 @@ function splitPeer(peer) {
 // stall the post step. Returns the first name (trailing dot stripped) or null.
 async function reverseLookup(ip) {
   try {
+    // Ask the REAL upstream resolver, not the ambient one: during capture
+    // /etc/resolv.conf points at our forwarder (and in post() it may be mid
+    // teardown), so a default PTR query stalls and returns nothing. Pointing a
+    // fresh Resolver at the true upstream is what makes reverse DNS actually
+    // resolve. Falls back to the default resolver when no upstream is found.
+    const { Resolver } = require("node:dns").promises;
+    const r = new Resolver({ timeout: 2000, tries: 1 });
+    const up = realUpstream();
+    if (up) r.setServers([up]);
     const names = await Promise.race([
-      dns.reverse(ip),
+      r.reverse(ip),
       new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 2500)),
     ]);
     return names && names.length ? names[0].replace(/\.$/, "") : null;
@@ -1264,6 +1340,7 @@ if (require.main === module) {
 // Pure helpers exported for the test suite (action/index.test.js).
 module.exports = {
   normalizeIp,
+  canonicalizeV6,
   isLocal,
   splitPeer,
   decisionFor,
@@ -1275,4 +1352,5 @@ module.exports = {
   egressBlockRules,
   egressUnblockRules,
   readDnsMap,
+  realUpstream,
 };

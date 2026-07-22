@@ -20,6 +20,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege: every job only reads the repo. No job needs to write contents,
+# move tags, or edit releases, so the default token is narrowed to read-only.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -38,7 +43,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Harden runner (Legion)
-        uses: Wraith-security/legion_runner@v1.0.41   # Marketplace action
+        uses: Wraith-security/legion_runner@v1.0.42   # Marketplace action
         with:
           # audit (monitor, don't firewall) + dns-capture ON to NAME destinations:
           # @v1 (>= 1.0.35) carries the teardown + systemd-resolved fixes, so
@@ -104,7 +109,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Harden runner (Legion)
-        uses: Wraith-security/legion_runner@v1.0.41   # dogfood our own action (audit)
+        uses: Wraith-security/legion_runner@v1.0.42   # dogfood our own action (audit)
         with:
           egress-policy: audit       # monitor only; never breaks the build
           ebpf: 'auto'
@@ -140,7 +145,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Harden runner (Legion)
-        uses: Wraith-security/legion_runner@v1.0.41   # dogfood our own action (audit)
+        uses: Wraith-security/legion_runner@v1.0.42   # dogfood our own action (audit)
         with:
           egress-policy: audit
           ebpf: 'auto'
@@ -169,7 +174,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Harden runner (Legion)
-        uses: Wraith-security/legion_runner@v1.0.41   # dogfood our own action (audit)
+        uses: Wraith-security/legion_runner@v1.0.42   # dogfood our own action (audit)
         with:
           egress-policy: audit
           ebpf: 'auto'
@@ -204,7 +209,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Harden runner (Legion)
-        uses: Wraith-security/legion_runner@v1.0.41   # dogfood our own action (audit)
+        uses: Wraith-security/legion_runner@v1.0.42   # dogfood our own action (audit)
         with:
           egress-policy: audit
           ebpf: 'auto'
