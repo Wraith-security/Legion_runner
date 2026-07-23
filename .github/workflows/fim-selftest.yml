@@ -30,7 +30,7 @@ jobs:
     name: Snapshot → tamper → detect
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Harden runner (Legion)
         uses: Wraith-security/legion_runner@v1.0.42   # dogfood our own action (audit)
         with:
