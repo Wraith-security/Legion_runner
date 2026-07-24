@@ -321,18 +321,41 @@ async function cacheSaveDomains(domains) {
 // Socket-layer connection capture that can't be bypassed by nss-resolve. Writes
 // "LEGIONC ip port pid comm" lines to its log. Falls back silently when eBPF is
 // unavailable (the /proc sampler still runs).
-function startEbpf(connectLog, bin) {
+async function startEbpf(connectLog, bin) {
   const out = { active: false, log: connectLog };
+  if (!bin) return out;
+  const errLog = path.join(os.tmpdir(), "legion-ebpf.err");
   try {
-    if (!bin) return out;
     fs.writeFileSync(connectLog, "");
-    const fd = fs.openSync(connectLog, "a");
+    fs.writeFileSync(errLog, "");
+    const outFd = fs.openSync(connectLog, "a");
+    const errFd = fs.openSync(errLog, "a");
     const child = spawnPrivileged(bin, [], {
       detached: true,
-      stdio: ["ignore", fd, "ignore"],
+      // Capture the agent's stderr — do NOT discard it. Loading eBPF can fail
+      // for real reasons (no BTF, no CAP_BPF, old kernel, wrong arch) and the
+      // agent prints why; swallowing it made failures undiagnosable.
+      stdio: ["ignore", outFd, errFd],
     });
     out.pid = child.pid;
     child.unref();
+    // The agent loads + attaches the tracepoint and opens the ring buffer at
+    // startup and fails fast, so verify it is still alive before claiming
+    // capture is active. Previously `active` was set unconditionally, so a
+    // crash-on-load still reported "eBPF capture active" and produced nothing.
+    await sleep(500);
+    let alive = true;
+    try {
+      process.kill(child.pid, 0);
+    } catch {
+      alive = false;
+    }
+    if (!alive) {
+      const reason =
+        (fs.readFileSync(errLog, "utf8").trim().split("\n").pop() || "agent exited on startup").slice(0, 300);
+      warn(`eBPF agent failed to start (${reason}); using the /proc sampler`);
+      return out; // active stays false — the sampler covers capture
+    }
     out.active = true;
     info("   eBPF capture active (legionr-bpf: tracepoint sys_enter_connect, socket-layer, bypass-proof)");
   } catch (e) {
@@ -863,7 +886,21 @@ async function main() {
   let ebpfCap = { active: false, log: "" };
   if (input("ebpf", "auto").toLowerCase() !== "off") {
     const bin = await ebpf.ensureBinary(); // local, else best-effort download
-    ebpfCap = startEbpf(path.join(os.tmpdir(), "legion-connect.log"), bin);
+    if (!bin) {
+      // Say WHY the agent isn't available, so a silent sampler fallback is
+      // diagnosable instead of looking like "eBPF just doesn't work".
+      if (!ebpf.hasBtf())
+        warn("eBPF unavailable: no kernel BTF (/sys/kernel/btf/vmlinux) on this runner; using the /proc sampler");
+      else if (process.platform !== "linux" || process.arch !== "x64")
+        warn(
+          `eBPF unavailable: no agent build for ${process.platform}/${process.arch} (the published legionr-bpf is x86_64 Linux); using the /proc sampler`,
+        );
+      else
+        warn(
+          "eBPF unavailable: could not fetch/verify legionr-bpf from the latest release — check that the binary is attached to the latest release; using the /proc sampler",
+        );
+    }
+    ebpfCap = await startEbpf(path.join(os.tmpdir(), "legion-connect.log"), bin);
   }
 
   // File-integrity baseline: the Rust legionr-fim agent snapshots the high-value
