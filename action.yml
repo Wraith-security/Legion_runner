@@ -1,8 +1,5 @@
 name: 'Legion Runner'
-description: >-
-  Stop CI supply chain attacks at the network layer. Legion records and blocks
-  every outbound connection from a GitHub Actions job and names the process
-  behind it. Open source, self contained, no account, no data leaves the runner.
+description: 'Stop CI supply chain attacks: monitor and block outbound traffic from GitHub Actions jobs, with process attribution.'
 author: 'Legion'
 branding:
   icon: 'shield'
