@@ -75,6 +75,26 @@ impl Runner {
         }
     }
 
+    /// Build the OS command that launches the single-use runner, with the
+    /// scope-wide management credentials stripped from its environment.
+    ///
+    /// `LEGIONR_TOKEN` (manage-runners on the whole scope) and `GITHUB_TOKEN`
+    /// live in this process's environment. Without removing them the child
+    /// `run.sh` — and therefore every `run:` step in the job — inherits them, so
+    /// an untrusted workflow could `echo $LEGIONR_TOKEN` and exfiltrate a
+    /// scope-wide credential. Split out from `run_once` so the removal is
+    /// asserted by a unit test without spawning a process or touching GitHub.
+    fn spawn_command(&self, cmd: &SpawnCommand) -> tokio::process::Command {
+        let mut command = tokio::process::Command::new(&cmd.program);
+        command
+            .args(&cmd.args)
+            .current_dir(&self.cfg.runner_dir)
+            .stdin(Stdio::null())
+            .env_remove("LEGIONR_TOKEN")
+            .env_remove("GITHUB_TOKEN");
+        command
+    }
+
     /// Mint a JIT config, run exactly one job, then wipe the workspace.
     ///
     /// Emits lifecycle events to Legion desktop throughout. The GitHub client is
@@ -109,10 +129,8 @@ impl Runner {
             RunnerPhase::JobStarted,
         ))
         .await;
-        let status = tokio::process::Command::new(&cmd.program)
-            .args(&cmd.args)
-            .current_dir(&self.cfg.runner_dir)
-            .stdin(Stdio::null())
+        let status = self
+            .spawn_command(&cmd)
             .status()
             .await
             .with_context(|| format!("spawning runner '{}'", cmd.program))?;
@@ -198,6 +216,32 @@ mod tests {
         assert!(joined.starts_with("run --rm"));
         assert!(joined.contains("--cap-drop=ALL"));
         assert!(joined.contains("./run.sh --jitconfig BLOB"));
+    }
+
+    #[test]
+    fn spawn_command_strips_scope_credentials_from_job_env() {
+        // The runner process holds LEGIONR_TOKEN (manage-runners on the whole
+        // scope) and GITHUB_TOKEN; the spawned job must never inherit them.
+        // env_remove records each as (key, None) in the command's env, which we
+        // can assert without spawning anything.
+        use std::ffi::OsStr;
+        let r = Runner::new(cfg());
+        let cmd = r.build_command("BLOB");
+        let spawned = r.spawn_command(&cmd);
+        let removed: std::collections::HashSet<std::ffi::OsString> = spawned
+            .as_std()
+            .get_envs()
+            .filter(|(_, v)| v.is_none())
+            .map(|(k, _)| k.to_os_string())
+            .collect();
+        assert!(
+            removed.contains(OsStr::new("LEGIONR_TOKEN")),
+            "LEGIONR_TOKEN is not removed from the job environment"
+        );
+        assert!(
+            removed.contains(OsStr::new("GITHUB_TOKEN")),
+            "GITHUB_TOKEN is not removed from the job environment"
+        );
     }
 
     #[test]
