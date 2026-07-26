@@ -18,6 +18,31 @@ deployment.
   security group needs **no** inbound SSH/bastion rule. Access is identity- and
   ACL-gated via Tailscale SSH — no host SSH keys.
 
+## No Tailscale subscription required
+
+Tailscale's hosted coordinator needs an account, SSO, and (for business/fleet
+use) a paid plan. You do **not** have to use it. This integration is optional
+(`enabled: false` by default) and coordinator-agnostic:
+
+- **Headscale (recommended for self-hosted / defense).** An open-source
+  reimplementation of the Tailscale control server. Same `tailscale` client, same
+  WireGuard data plane, but **you** run the control plane — no third party in the
+  trust boundary, no subscription. Set `login_server` to your Headscale URL and
+  everything below works unchanged (auth keys, tags, Tailscale SSH). This is the
+  right fit for an air-gapped or sovereignty-sensitive deployment.
+- **Plain WireGuard.** No coordinator at all: static peer config between the
+  operator/bastion and the runner hosts. Open the mesh in the firewall via
+  `egress_allow` / the same UDP port. You lose ACLs, MagicDNS, and NAT-traversal
+  magic, but it's zero-dependency and fully self-hosted.
+- **AWS SSM Session Manager (AWS-native, no VPN).** On EC2 you can get the same
+  "no inbound, IAM-gated shell" without any mesh: the SSM agent dials out to
+  `ssm`/`ssmmessages`/`ec2messages` endpoints (add those to `egress_allow`), and
+  you `aws ssm start-session` in. No Tailscale, no subscription beyond AWS.
+
+The rest of this guide uses Tailscale/Headscale terms; for Headscale just add
+`login_server`. The nftables mesh baseline (`udp/41641` + `udp/3478`) is the same
+for Tailscale and Headscale.
+
 ## 1. Tailnet setup (once)
 
 Create an **ephemeral, pre-authorized, tagged** auth key (Admin console ->
@@ -50,7 +75,10 @@ block leaves everything exactly as before):
     "auth_key_env": "TS_AUTHKEY",       // key is read from env, never stored
     "tag": "tag:legion-runner",
     "ssh": true,                         // Tailscale SSH, no host keys
-    "accept_routes": false
+    "accept_routes": false,
+    // Optional: point at a self-hosted Headscale control server (no Tailscale
+    // account/subscription). Omit to use Tailscale's hosted coordinator.
+    "login_server": "https://headscale.your.net"
   }
 }
 ```

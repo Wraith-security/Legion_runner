@@ -53,6 +53,13 @@ pub struct TailscaleConfig {
     /// Accept subnet routes advertised on the tailnet.
     #[serde(default)]
     pub accept_routes: bool,
+
+    /// Control server URL. Unset uses Tailscale's hosted coordinator (needs a
+    /// Tailscale account/plan). Set it to a self-hosted **Headscale** URL to run
+    /// the whole control plane yourself — no Tailscale subscription, no third
+    /// party in the trust boundary. Same client, same WireGuard data plane.
+    #[serde(default)]
+    pub login_server: Option<String>,
 }
 
 impl Default for TailscaleConfig {
@@ -64,6 +71,7 @@ impl Default for TailscaleConfig {
             hostname: None,
             ssh: true,
             accept_routes: false,
+            login_server: None,
         }
     }
 }
@@ -91,6 +99,11 @@ impl TailscaleConfig {
         }
         if self.accept_routes {
             args.push("--accept-routes".to_string());
+        }
+        // Point at a self-hosted Headscale control server when configured, so no
+        // Tailscale account/subscription is required.
+        if let Some(server) = &self.login_server {
+            args.push(format!("--login-server={server}"));
         }
         args
     }
@@ -175,6 +188,23 @@ mod tests {
             .up_args("k", "h")
             .iter()
             .any(|a| a == "--accept-routes"));
+    }
+
+    #[test]
+    fn login_server_targets_self_hosted_headscale() {
+        let t = TailscaleConfig {
+            login_server: Some("https://headscale.internal".to_string()),
+            ..Default::default()
+        };
+        assert!(t
+            .up_args("k", "h")
+            .iter()
+            .any(|a| a == "--login-server=https://headscale.internal"));
+        // Default (hosted Tailscale) adds no --login-server flag.
+        assert!(!TailscaleConfig::default()
+            .up_args("k", "h")
+            .iter()
+            .any(|a| a.starts_with("--login-server")));
     }
 
     #[test]
