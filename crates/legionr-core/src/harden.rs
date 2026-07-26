@@ -43,6 +43,15 @@ impl<'a> HardeningProfile<'a> {
                 hosts.push(h.clone());
             }
         }
+        // With Tailscale as the management path, its control-plane hosts must be
+        // resolvable under default-deny so the coordination handshake succeeds.
+        if self.cfg.tailscale.enabled {
+            for h in self.cfg.tailscale.control_hosts() {
+                if !hosts.contains(&h) {
+                    hosts.push(h);
+                }
+            }
+        }
         hosts
     }
 
@@ -151,6 +160,17 @@ impl<'a> HardeningProfile<'a> {
             .map(|h| format!("        # {h}"))
             .collect::<Vec<_>>()
             .join("\n");
+        // When Tailscale is the management path, open the mesh (direct WireGuard
+        // + STUN) in the chain so default-deny never strands the operator. The
+        // control-plane hosts are already in the resolved allow set above. Empty
+        // when disabled, so the ruleset is byte-identical to before.
+        let ts_block = if self.cfg.tailscale.enabled {
+            let mut s = self.cfg.tailscale.nft_allow_rules().join("\n");
+            s.push('\n');
+            s
+        } else {
+            String::new()
+        };
         format!(
             "#!/usr/sbin/nft -f\n\
              # Legion Runner — default-deny egress allowlist.\n\
@@ -165,6 +185,7 @@ impl<'a> HardeningProfile<'a> {
              \x20       oifname \"lo\" accept\n\
              \x20       udp dport 53 accept\n\
              \x20       tcp dport 53 accept\n\
+             {ts_block}\
              \x20       ip daddr @allow4 tcp dport {{ 80, 443 }} accept\n\
              \x20       ip6 daddr @allow6 tcp dport {{ 80, 443 }} accept\n\
              \x20       # allowlisted destinations (resolved at load):\n\
@@ -220,6 +241,26 @@ mod tests {
         let rs = HardeningProfile::new(&c).nftables_ruleset();
         assert!(rs.contains("policy drop"));
         assert!(rs.contains("udp dport 53 accept"));
+        // Off by default: no Tailscale rules leak into a non-Tailscale ruleset.
+        assert!(!rs.contains("41641"));
+    }
+
+    #[test]
+    fn nft_opens_the_tailscale_mesh_when_enabled() {
+        let mut c = cfg();
+        c.tailscale.enabled = true;
+        let profile = HardeningProfile::new(&c);
+        let rs = profile.nftables_ruleset();
+        // Mesh transport is opened so the management path survives default-deny...
+        assert!(
+            rs.contains("udp dport 41641 accept"),
+            "WireGuard not opened"
+        );
+        assert!(rs.contains("udp dport 3478 accept"), "STUN not opened");
+        // ...but 443 is NOT blanket-opened; control hosts are allowlisted by name.
+        let hosts = profile.egress_hosts();
+        assert!(hosts.iter().any(|h| h == "controlplane.tailscale.com"));
+        assert!(rs.contains("policy drop"));
     }
 
     #[test]
