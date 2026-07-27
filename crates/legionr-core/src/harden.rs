@@ -61,8 +61,11 @@ impl<'a> HardeningProfile<'a> {
              Documentation=https://github.com/Wraith-security/legion_runner\n\
              After=network-online.target\n\
              Wants=network-online.target\n\
-             # Hard stop if a job wedges; a fresh runner replaces it.\n\
-             StartLimitIntervalSec=0\n\
+             # Back off on a fast crash loop (e.g. bad credentials): 5 starts per\n\
+             # 5 minutes, then stop. Without this, Restart=always + RestartSec=2\n\
+             # hammers GitHub's generate-jitconfig ~30x/min until the rate limit.\n\
+             StartLimitIntervalSec=300\n\
+             StartLimitBurst=5\n\
              \n\
              [Service]\n\
              Type=simple\n\
@@ -82,6 +85,13 @@ impl<'a> HardeningProfile<'a> {
              ProtectSystem=strict\n\
              ProtectHome=true\n\
              ReadWritePaths={runner_dir} {work_dir}\n\
+             # Writable HOME for the job's toolchains (pip/npm/cargo caches).\n\
+             # systemd creates %S/legion-runner under /var/lib, owns it as the\n\
+             # service user, and adds it to the read-write set. Without a writable\n\
+             # HOME, ProtectHome=true + ProtectSystem=strict leave $HOME read-only\n\
+             # and every package step fails on its first write.\n\
+             StateDirectory=legion-runner\n\
+             Environment=HOME=%S/legion-runner\n\
              PrivateTmp=true\n\
              PrivateDevices=true\n\
              ProtectKernelTunables=true\n\
@@ -173,6 +183,41 @@ impl<'a> HardeningProfile<'a> {
              }}\n"
         )
     }
+
+    /// Like [`Self::nftables_ruleset`] but with the allow sets **populated** from
+    /// resolved IPs, so the ruleset is safe to load directly. `harden --install`
+    /// writes this, never the empty-set template: a default-deny chain with empty
+    /// allow sets takes the host off the network, the operator's management path
+    /// included (#71). Empty `elements` clauses are omitted (invalid nft),
+    /// matching `harden.sh`.
+    pub fn nftables_ruleset_with_ips(&self, v4: &[String], v6: &[String]) -> String {
+        let elems = |ips: &[String]| {
+            if ips.is_empty() {
+                String::new()
+            } else {
+                format!(" elements = {{ {} }}", ips.join(", "))
+            }
+        };
+        let a4 = elems(v4);
+        let a6 = elems(v6);
+        format!(
+            "#!/usr/sbin/nft -f\n\
+             # Legion Runner — default-deny egress allowlist (resolved).\n\
+             table inet legionr {{\n\
+             \x20   set allow4 {{ type ipv4_addr; flags interval;{a4} }}\n\
+             \x20   set allow6 {{ type ipv6_addr; flags interval;{a6} }}\n\
+             \x20   chain output {{\n\
+             \x20       type filter hook output priority 0; policy drop;\n\
+             \x20       ct state established,related accept\n\
+             \x20       oifname \"lo\" accept\n\
+             \x20       udp dport 53 accept\n\
+             \x20       tcp dport 53 accept\n\
+             \x20       ip daddr @allow4 tcp dport {{ 80, 443 }} accept\n\
+             \x20       ip6 daddr @allow6 tcp dport {{ 80, 443 }} accept\n\
+             \x20   }}\n\
+             }}\n"
+        )
+    }
 }
 
 #[cfg(test)]
@@ -227,5 +272,43 @@ mod tests {
         let c = cfg();
         let s = HardeningProfile::new(&c).sysctl_dropin();
         assert!(s.contains("kernel.yama.ptrace_scope = 2"));
+    }
+
+    #[test]
+    fn unit_backs_off_on_crash_loop() {
+        // #73: no disabled start limiter; a real window + burst so a credential
+        // failure loop can't hammer generate-jitconfig forever.
+        let unit = HardeningProfile::new(&cfg()).systemd_unit();
+        assert!(
+            !unit.contains("StartLimitIntervalSec=0"),
+            "limiter disabled"
+        );
+        assert!(unit.contains("StartLimitIntervalSec=300"));
+        assert!(unit.contains("StartLimitBurst=5"));
+    }
+
+    #[test]
+    fn unit_gives_the_runner_a_writable_home() {
+        // #74: ProtectSystem=strict + ProtectHome=true leave $HOME read-only;
+        // a systemd StateDirectory provides a writable HOME for pip/npm/cargo.
+        let unit = HardeningProfile::new(&cfg()).systemd_unit();
+        assert!(unit.contains("StateDirectory=legion-runner"));
+        assert!(unit.contains("Environment=HOME=%S/legion-runner"));
+    }
+
+    #[test]
+    fn resolved_ruleset_populates_sets_and_never_bricks_empty() {
+        // #71: the installed ruleset carries resolved IPs in the allow sets.
+        let c = cfg();
+        let p = HardeningProfile::new(&c);
+        let rs = p.nftables_ruleset_with_ips(&["140.82.112.3".into()], &["2606:50c0::153".into()]);
+        assert!(rs.contains("elements = { 140.82.112.3 }"));
+        assert!(rs.contains("elements = { 2606:50c0::153 }"));
+        assert!(rs.contains("policy drop"));
+        // Empty families omit the `elements` clause (an empty `{ }` is invalid nft)
+        // while still emitting a valid, loadable set declaration.
+        let empty = p.nftables_ruleset_with_ips(&[], &[]);
+        assert!(!empty.contains("elements = {"));
+        assert!(empty.contains("set allow4 { type ipv4_addr; flags interval; }"));
     }
 }
