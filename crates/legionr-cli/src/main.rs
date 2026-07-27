@@ -240,13 +240,61 @@ fn harden(config: Option<PathBuf>, install: bool, instance: &str) -> Result<()> 
         return Ok(());
     }
 
+    // #71: never install a default-deny firewall with EMPTY allow sets — that
+    // takes the host off the network, the operator's management path included.
+    // Resolve the allowlist, refuse if nothing resolved, and write POPULATED sets.
+    let (v4, v6) = resolve_allow_ips(&profile.egress_hosts());
+    if v4.is_empty() && v6.is_empty() {
+        anyhow::bail!(
+            "refusing to install a default-deny firewall with an empty allowlist: \
+             no egress hostnames resolved (loading this would take the host offline, \
+             management path included). Check DNS and re-run, or use scripts/harden.sh \
+             which resolves and reloads the allow sets on a timer."
+        );
+    }
+    let nft = profile.nftables_ruleset_with_ips(&v4, &v6);
+
     write_root("/etc/systemd/system/legionr@.service", &unit)?;
     write_root("/etc/sysctl.d/99-legion-runner.conf", &sysctl)?;
     write_root("/etc/nftables.d/legion-runner.nft", &nft)?;
-    println!("✔ installed hardening artifacts");
+    println!(
+        "✔ installed hardening artifacts ({} IPv4 + {} IPv6 egress IPs allowed)",
+        v4.len(),
+        v6.len()
+    );
     println!("  enable: systemctl daemon-reload && systemctl enable --now legionr@{instance}");
     println!("  sysctl: sysctl --system");
     Ok(())
+}
+
+/// Resolve egress hostnames to IPv4/IPv6 address strings (deduped) for the
+/// nftables allow sets, via the OS resolver. Unresolvable hosts are skipped;
+/// the caller refuses to install when nothing resolves.
+fn resolve_allow_ips(hosts: &[String]) -> (Vec<String>, Vec<String>) {
+    use std::net::{IpAddr, ToSocketAddrs};
+    let (mut v4, mut v6) = (Vec::new(), Vec::new());
+    for h in hosts {
+        let Ok(addrs) = (h.as_str(), 443u16).to_socket_addrs() else {
+            continue;
+        };
+        for a in addrs {
+            match a.ip() {
+                IpAddr::V4(ip) => {
+                    let s = ip.to_string();
+                    if !v4.contains(&s) {
+                        v4.push(s);
+                    }
+                }
+                IpAddr::V6(ip) => {
+                    let s = ip.to_string();
+                    if !v6.contains(&s) {
+                        v6.push(s);
+                    }
+                }
+            }
+        }
+    }
+    (v4, v6)
 }
 
 async fn pair(config: Option<PathBuf>, link: Option<String>) -> Result<()> {
