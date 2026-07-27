@@ -110,6 +110,13 @@ pub struct RunnerConfig {
     /// endpoints are always included by [`crate::harden`].
     #[serde(default)]
     pub egress_allow: Vec<String>,
+
+    /// Optional Tailscale integration: join the tailnet at boot so the host
+    /// stays reachable (Tailscale SSH) even under default-deny egress, and open
+    /// the mesh in the firewall. Disabled by default; additive, so configs
+    /// without this key are unaffected.
+    #[serde(default)]
+    pub tailscale: crate::tailscale::TailscaleConfig,
 }
 
 impl RunnerConfig {
@@ -128,6 +135,7 @@ impl RunnerConfig {
             container_image: default_image(),
             legion_link: default_link(),
             egress_allow: Vec::new(),
+            tailscale: crate::tailscale::TailscaleConfig::default(),
         }
     }
 
