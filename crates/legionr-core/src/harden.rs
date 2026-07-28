@@ -239,6 +239,74 @@ impl<'a> HardeningProfile<'a> {
              }}\n"
         )
     }
+
+    /// Atomic nftables transaction that refreshes the live allow sets in place.
+    ///
+    /// GitHub rotates its endpoint IPs, so a set resolved once at install drifts
+    /// and the default-deny chain starts dropping legitimate egress (#72). A
+    /// timer runs this on a cadence: for each address family that resolved to at
+    /// least one IP, `flush set` + `add element` run in a single `nft -f`
+    /// transaction (atomic — no window where the set is empty and the host is
+    /// fenced off). A family that resolved to *nothing* this cycle is left
+    /// untouched rather than flushed to empty, so a transient DNS failure can
+    /// never brick a host that was reachable a moment ago.
+    ///
+    /// Returns an empty string when neither family resolved — the caller refuses
+    /// to pipe an empty transaction to `nft` (there is nothing safe to do).
+    pub fn nftables_refresh(&self, v4: &[String], v6: &[String]) -> String {
+        let mut out = String::new();
+        if !v4.is_empty() {
+            out.push_str("flush set inet legionr allow4\n");
+            out.push_str(&format!(
+                "add element inet legionr allow4 {{ {} }}\n",
+                v4.join(", ")
+            ));
+        }
+        if !v6.is_empty() {
+            out.push_str("flush set inet legionr allow6\n");
+            out.push_str(&format!(
+                "add element inet legionr allow6 {{ {} }}\n",
+                v6.join(", ")
+            ));
+        }
+        out
+    }
+
+    /// Templated oneshot service that re-resolves the allowlist and reloads the
+    /// nft set elements for instance `%i` (config at `/etc/legion-runner/%i.json`).
+    /// Driven by [`Self::egress_refresh_timer`].
+    pub fn egress_refresh_service(&self) -> String {
+        "[Unit]\n\
+         Description=Legion Runner egress allowlist refresh (%i)\n\
+         Documentation=https://github.com/Wraith-security/legion_runner\n\
+         After=network-online.target nftables.service\n\
+         Wants=network-online.target\n\
+         \n\
+         [Service]\n\
+         Type=oneshot\n\
+         # Re-resolve the egress allowlist and atomically replace the live nft\n\
+         # set elements. GitHub rotates endpoint IPs; without this the static\n\
+         # sets drift and the default-deny policy starts dropping valid egress.\n\
+         ExecStart=/bin/sh -c '/usr/local/bin/legionr --config /etc/legion-runner/%i.json harden --refresh | /usr/sbin/nft -f -'\n"
+            .to_string()
+    }
+
+    /// Timer that fires [`Self::egress_refresh_service`] shortly after boot and
+    /// every 15 minutes thereafter. `Persistent=true` runs a missed refresh on
+    /// wake so a suspended/offline host re-syncs immediately.
+    pub fn egress_refresh_timer(&self) -> String {
+        "[Unit]\n\
+         Description=Refresh Legion Runner egress allowlist (%i) periodically\n\
+         \n\
+         [Timer]\n\
+         OnBootSec=5min\n\
+         OnUnitActiveSec=15min\n\
+         Persistent=true\n\
+         \n\
+         [Install]\n\
+         WantedBy=timers.target\n"
+            .to_string()
+    }
 }
 
 #[cfg(test)]
@@ -351,5 +419,41 @@ mod tests {
         let empty = p.nftables_ruleset_with_ips(&[], &[]);
         assert!(!empty.contains("elements = {"));
         assert!(empty.contains("set allow4 { type ipv4_addr; flags interval; }"));
+    }
+
+    #[test]
+    fn refresh_is_atomic_and_never_flushes_to_empty() {
+        // #72: the refresh flushes then re-adds each family in ONE transaction,
+        // and only touches a family that actually resolved — a family with no
+        // IPs this cycle is left alone, never flushed to empty (anti-brick).
+        let c = cfg();
+        let p = HardeningProfile::new(&c);
+
+        let both = p.nftables_refresh(&["140.82.112.3".into()], &["2606:50c0::153".into()]);
+        assert!(both.contains("flush set inet legionr allow4"));
+        assert!(both.contains("add element inet legionr allow4 { 140.82.112.3 }"));
+        assert!(both.contains("flush set inet legionr allow6"));
+        assert!(both.contains("add element inet legionr allow6 { 2606:50c0::153 }"));
+
+        // v6 empty this cycle: allow6 is left untouched (no flush), allow4 refreshed.
+        let v4only = p.nftables_refresh(&["140.82.112.3".into()], &[]);
+        assert!(v4only.contains("flush set inet legionr allow4"));
+        assert!(!v4only.contains("allow6"));
+
+        // Neither resolved: empty output so the caller pipes nothing to nft.
+        assert!(p.nftables_refresh(&[], &[]).is_empty());
+    }
+
+    #[test]
+    fn refresh_units_wire_timer_to_resolver() {
+        let c = cfg();
+        let p = HardeningProfile::new(&c);
+        let svc = p.egress_refresh_service();
+        assert!(svc.contains("Type=oneshot"));
+        assert!(svc.contains("legionr --config /etc/legion-runner/%i.json harden --refresh"));
+        assert!(svc.contains("nft -f -"));
+        let timer = p.egress_refresh_timer();
+        assert!(timer.contains("OnUnitActiveSec=15min"));
+        assert!(timer.contains("WantedBy=timers.target"));
     }
 }
