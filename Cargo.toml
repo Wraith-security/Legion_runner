@@ -29,6 +29,9 @@ serde              = { version = "1",    features = ["derive"] }
 serde_json         = "1"
 # hashing (file-integrity fingerprints)
 sha2               = "0.10"
+# GitHub App auth — RS256 JWT signing (ring-backed; avoids the `rsa` crate's
+# unpatched RUSTSEC-2023-0071 Marvin advisory that would trip `cargo audit`).
+jsonwebtoken       = { version = "9", default-features = false, features = ["use_pem"] }
 # datetime
 chrono             = { version = "0.4",  features = ["serde"] }
 # error handling

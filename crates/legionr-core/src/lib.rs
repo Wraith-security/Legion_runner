@@ -17,6 +17,7 @@
 //! - [`link`]    — heartbeats lifecycle events to the Legion desktop monitor.
 //! - [`fim`]     — file-integrity monitoring: snapshot + diff of tamper targets.
 
+pub mod app_auth;
 pub mod config;
 pub mod container;
 pub mod fim;
