@@ -51,8 +51,9 @@ steps:
 ```
 
 > This repo also ships a companion **ephemeral, single-use self-hosted runner** (a
-> Rust control plane). To harden GitHub-hosted runners you only need the Action
-> above; the self-hosted platform is documented in
+> Rust control plane) that authenticates with a **GitHub App** — install once on
+> your org, no PATs, keyless on the host. To harden GitHub-hosted runners you only
+> need the Action above; the self-hosted platform is documented in
 > [Ephemeral self-hosted runner](#ephemeral-self-hosted-runner).
 
 ## How Legion compares
@@ -304,6 +305,21 @@ removes the persistence surface entirely:
   hardening, a default-deny egress allowlist, and an optional rootless container
   sandbox per job.
 
+### No PATs — the Legion Runner GitHub App
+
+Legion Runner authenticates as a **GitHub App**, not a personal access token.
+Install the App once on your org and every current and future repo is covered —
+"install once, run everywhere." On each job `legionr` signs a short-lived JWT
+with the App key and mints an **installation token** that expires in about an
+hour, so nothing long-lived ever sits on the host or in CI.
+
+- **Keyless on the host.** Point `legionr` at the App ID and private key; it
+  mints and refreshes its own tokens. No PAT to rotate, no token on disk.
+- **Least privilege.** Only *Administration*, *Actions*, and *Self-hosted
+  runners* — far narrower than a PAT with `repo`/`admin`.
+- **Two-click setup.** A pre-filled creator generates the App with the right
+  permissions; see **[docs/github-app.md](docs/github-app.md)**.
+
 ### Architecture
 
 ```
@@ -332,10 +348,13 @@ removes the persistence surface entirely:
 # 1. Install (creates the legionr user, fetches the official runner, builds legionr)
 sudo ./scripts/install.sh
 
-# 2. Point a runner at a repo or org (token never touches disk)
-#    Recommended: a "Legion Runner" GitHub App installed on your org, minting
-#    short-lived installation tokens instead of a PAT. See docs/github-app.md.
-export LEGIONR_TOKEN=<github App installation token, or a PAT with manage-runners>
+# 2. Point a runner at a repo or org (credential never touches disk)
+#    Recommended: the Legion Runner GitHub App (keyless, no PAT). Install it on
+#    your org, then point legionr at the App ID + private key — see docs/github-app.md.
+export LEGIONR_APP_ID=2610838
+export LEGIONR_APP_PRIVATE_KEY_FILE=/etc/legion-runner/legion-app.pem
+#    …or use a classic token instead:
+# export LEGIONR_TOKEN=<PAT with manage-runners>
 sudo -u legionr -E legionr provision Wraith-security/legion_runner \
      --config /etc/legion-runner/default.json \
      --container podman \
