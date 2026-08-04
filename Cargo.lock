@@ -1314,7 +1314,7 @@ checksum = "0d585997b0ac10be3c5ee635f1bab02d512760d14b7c468801ac8a01d9ae5f1d"
 dependencies = [
  "num-bigint",
  "num-traits",
- "thiserror 2.0.18",
+ "thiserror",
  "time",
 ]
 
