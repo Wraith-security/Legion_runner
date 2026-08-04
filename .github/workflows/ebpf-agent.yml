@@ -65,5 +65,20 @@ jobs:
           sleep 1
           echo "=== captured ==="; sudo cat /tmp/legionc.log | head -20 || true
           echo "=== stderr ==="; sudo cat /tmp/legionc.err | head -20 || true
-          grep -q "LEGIONC " /tmp/legionc.log && echo "PASS: agent captured a connection" || {
-            echo "NOTE: no capture (see stderr above) — agent build/load needs a fix"; exit 1; }
+          # The claim is "names the process behind every connection", so assert
+          # the comm field is populated rather than just that a line appeared.
+          # A capture with an empty comm satisfies a bare `grep "LEGIONC "`, so
+          # that check could not tell real attribution from a blank field.
+          sudo grep -qE '^LEGIONC [0-9a-fA-F.:]+ [0-9]+ [0-9]+ [^ ]+$' /tmp/legionc.log || {
+            echo "FAIL: no capture line with all five fields populated (see stderr above)"
+            exit 1; }
+          echo "PASS: captured a connection with a named process"
+
+          # Exactly one connection was generated above, by curl. If attribution
+          # works, curl is among the captured comms. This asserts the claim
+          # itself rather than a proxy for it.
+          sudo grep -qE '^LEGIONC [0-9a-fA-F.:]+ [0-9]+ [0-9]+ curl$' /tmp/legionc.log || {
+            echo "FAIL: a connection was captured but not attributed to curl"
+            echo "captured comms were:"; sudo awk '{print $5}' /tmp/legionc.log | sort -u
+            exit 1; }
+          echo "PASS: the curl connection is attributed to process 'curl'"
