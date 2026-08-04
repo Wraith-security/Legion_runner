@@ -69,7 +69,9 @@ jobs:
           # the comm field is populated rather than just that a line appeared.
           # A capture with an empty comm satisfies a bare `grep "LEGIONC "`, so
           # that check could not tell real attribution from a blank field.
-          sudo grep -qE '^LEGIONC [0-9a-fA-F.:]+ [0-9]+ [0-9]+ [^ ]+$' /tmp/legionc.log || {
+          # comm may contain spaces (".NET TP Worker", "git remote"), so the
+          # field is "rest of line, non-empty" rather than a single token.
+          sudo grep -qE '^LEGIONC [0-9a-fA-F.:]+ [0-9]+ [0-9]+ .+$' /tmp/legionc.log || {
             echo "FAIL: no capture line with all five fields populated (see stderr above)"
             exit 1; }
           echo "PASS: captured a connection with a named process"
