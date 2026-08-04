@@ -93,17 +93,41 @@ single-use lifecycle. Without the secrets it skips cleanly.
 
 ### A production host (EC2 / systemd)
 
-`legionr` reads its credential from `LEGIONR_TOKEN` (then `GITHUB_TOKEN`). On a
-host with no Actions runtime to mint the token for you, exchange the App key for
-an installation token before starting the service — for example with a small
-timer that refreshes it, or a helper such as
-[`actions/create-github-app-token`'s underlying flow][cgt] run out-of-band. The
-token is short-lived, so it must be refreshed (~hourly).
+`legionr` authenticates as the App **natively** — point it at the App ID and
+private key and it mints (and, in the `run` loop, refreshes) its own
+installation tokens. No PAT, and no external token-minting helper on the host.
 
-> Native, in-process App authentication in `legionr` (point it at the App ID +
-> private key and let it mint and refresh its own installation tokens, so no
-> token-minting helper is needed on the host) is a natural next step — see the
-> note at the end of this guide.
+Set these in the environment (e.g. `/etc/legion-runner/<instance>.env`, loaded
+by the systemd unit with `EnvironmentFile=`):
+
+```sh
+LEGIONR_APP_ID=2610838
+# Either the PEM contents inline…
+LEGIONR_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----
+…
+-----END RSA PRIVATE KEY-----"
+# …or a path to the .pem (keep it 0600, owned by the service user):
+LEGIONR_APP_PRIVATE_KEY_FILE=/etc/legion-runner/legion-app.pem
+# Optional: skip installation lookup by pinning the installation id.
+LEGIONR_APP_INSTALLATION_ID=12345678
+```
+
+Then provision and run as usual — no `LEGIONR_TOKEN` needed:
+
+```sh
+legionr provision your-org/your-repo   # the probe mints a token to verify access
+legionr run                            # mints a fresh installation token per job
+```
+
+Resolution order is **`LEGIONR_TOKEN` → `GITHUB_TOKEN` → the App**, so a static
+token still wins where you set one (e.g. CI using `create-github-app-token`),
+and existing PAT setups are unchanged. Legion never writes the token to disk;
+it's minted in memory and stripped from the job's environment before the job
+runs.
+
+> Store the private key only as a file readable by the service user, or as a
+> secret — never in the repo or the JSON config. The `.pem` is the App's
+> credential; treat it like an SSH private key.
 
 ---
 
@@ -118,6 +142,10 @@ token is short-lived, so it must be refreshed (~hourly).
 - Keep the App **private** to your account/orgs unless you intend others to
   install Legion Runner. Public just means "installable elsewhere"; it never
   exposes your key or your installations.
+- Legion signs a short-lived RS256 JWT with the App key to mint each
+  installation token. The signing uses the `ring`-backed `jsonwebtoken` crate —
+  deliberately not the pure-Rust `rsa` crate, which carries the unpatched
+  RUSTSEC-2023-0071 timing advisory that `cargo audit` would flag.
 
 [manifest]: https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest
 [cgt]: https://github.com/actions/create-github-app-token

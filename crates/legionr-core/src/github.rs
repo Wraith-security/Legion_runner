@@ -68,6 +68,33 @@ impl GitHubClient {
         Self::new(token_from_env()?)
     }
 
+    /// Build a client, resolving the credential for a specific scope.
+    ///
+    /// Precedence, so existing setups are unchanged:
+    /// 1. a static `LEGIONR_TOKEN` / `GITHUB_TOKEN` (PAT or pre-minted token);
+    /// 2. otherwise, the **Legion Runner GitHub App** (`LEGIONR_APP_ID` +
+    ///    `LEGIONR_APP_PRIVATE_KEY[_FILE]`), which mints a short-lived
+    ///    installation token for this scope on the spot — no PAT anywhere.
+    pub async fn from_env_for_scope(scope: &Scope) -> Result<Self> {
+        if let Ok(token) = token_from_env() {
+            return Self::new(token);
+        }
+        if let Some(app) = crate::app_auth::AppAuth::from_env()? {
+            let http = reqwest::Client::builder()
+                .user_agent(crate::user_agent())
+                .timeout(Duration::from_secs(30))
+                .build()
+                .context("building HTTP client")?;
+            let token = app.installation_token(&http, scope).await?;
+            return Ok(Self { http, token });
+        }
+        anyhow::bail!(
+            "no GitHub credential found; set LEGIONR_TOKEN (a PAT with 'manage runners'), \
+             or configure the Legion Runner GitHub App via LEGIONR_APP_ID + \
+             LEGIONR_APP_PRIVATE_KEY (or LEGIONR_APP_PRIVATE_KEY_FILE) — see docs/github-app.md"
+        )
+    }
+
     fn auth(&self, rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         rb.header("Authorization", format!("Bearer {}", self.token))
             .header("Accept", "application/vnd.github+json")
