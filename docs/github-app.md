@@ -107,7 +107,7 @@ Set these in the environment (e.g. `/etc/legion-runner/<instance>.env`, loaded
 by the systemd unit with `EnvironmentFile=`):
 
 ```sh
-LEGIONR_APP_ID=2610838
+LEGIONR_APP_ID=<your App ID, from the App's General page>
 # Either the PEM contents inline…
 LEGIONR_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----
 …
