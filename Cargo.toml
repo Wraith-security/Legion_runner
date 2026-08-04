@@ -36,7 +36,7 @@ jsonwebtoken       = { version = "9", default-features = false, features = ["use
 chrono             = { version = "0.4",  features = ["serde"] }
 # error handling
 anyhow             = "1"
-thiserror          = "1"
+thiserror          = "2"
 # logging
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

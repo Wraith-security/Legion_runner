@@ -20,6 +20,7 @@
 //! so snapshotting a private key or `.npmrc` records no secret material.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -152,7 +153,14 @@ fn hash_file(path: &Path) -> Option<String> {
         }
         hasher.update(&buf[..n]);
     }
-    Some(format!("{:x}", hasher.finalize()))
+    // Encode the digest by hand rather than `format!("{:x}", ..)`: sha2 0.11
+    // returns a `hybrid_array::Array`, which does not implement `LowerHex`.
+    // Iterating the bytes works on both 0.10 and 0.11.
+    let mut hex = String::with_capacity(64);
+    for byte in hasher.finalize() {
+        let _ = write!(hex, "{byte:02x}");
+    }
+    Some(hex)
 }
 
 /// Fingerprint a path, or `None` if it isn't a regular file. Files over
@@ -375,6 +383,33 @@ mod tests {
         }
         let mut f = fs::File::create(path).unwrap();
         f.write_all(bytes).unwrap();
+    }
+
+    #[test]
+    fn hash_file_matches_the_known_sha256_digest() {
+        // Guards the hand-rolled hex encoding in `hash_file`: a wrong encoding
+        // (truncated, reversed, or missing a leading zero) still returns a
+        // plausible-looking string, so assert the exact NIST "abc" digest.
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("abc.txt");
+        write(&f, b"abc");
+        assert_eq!(
+            hash_file(&f).unwrap(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn hash_file_keeps_leading_zero_bytes() {
+        // A byte below 0x10 must encode as two chars. `{:x}` per byte would
+        // drop the leading zero and shorten the digest.
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("z.bin");
+        // sha256("") starts with 0xe3; this input's digest contains 0x0f bytes.
+        write(&f, b"legion");
+        let h = hash_file(&f).unwrap();
+        assert_eq!(h.len(), 64, "sha256 hex must be exactly 64 chars: {h}");
+        assert!(h.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]
