@@ -62,16 +62,22 @@ After creating:
 
 ## Wire it up
 
-### End-to-end test (`legion_runner` CI)
+### End-to-end test (run by hand)
 
-Add two repository secrets to `legion_runner`:
+CI no longer runs a live tier. `.github/workflows/e2e.yml` keeps only the
+`local` job, which needs no credentials. The live lifecycle is still available
+from the harness, pointed at a scope you control:
 
-- `LEGION_E2E_APP_ID` — the App ID.
-- `LEGION_E2E_APP_PRIVATE_KEY` — the full contents of the `.pem`.
+```bash
+LEGIONR_TOKEN=<installation token> scripts/e2e.sh --mode live --scope owner/repo
+```
 
-The `live` job in `.github/workflows/e2e.yml` mints an installation token scoped
-to DEFCON with [`actions/create-github-app-token`][cgt] and runs the real
-single-use lifecycle. Without the secrets it skips cleanly.
+The target repo's default branch must carry a `legion-e2e-receiver.yml`
+workflow, since the harness dispatches it to queue a job. The scope is
+mandatory: the harness refuses to guess a target it would register a real
+runner against. Mint the token with
+[`actions/create-github-app-token`][cgt] in a workflow, or from the App key
+directly outside one.
 
 ### A CI job that provisions a runner
 

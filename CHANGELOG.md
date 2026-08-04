@@ -60,6 +60,18 @@ Unreleased section.
   Secure by construction — only booleans, counts, and a fixed enum; never the
   upstream resolver IP, file paths, captured hostnames, or env values.
 
+### Changed
+- **The live e2e tier is out of CI.** `.github/workflows/e2e.yml` now runs only
+  the credential-free `local` job. The removed `live` job registered a runner
+  against a fixed external scope that this org cannot install the App on, so it
+  could only skip silently or fail noisily, and neither outcome said anything
+  about the runner. `scripts/e2e.sh --mode live` still works and can be pointed
+  at any scope you control, but the scope is now mandatory (`--scope owner/repo`
+  or `E2E_SCOPE`) instead of defaulting to a hardcoded constant: the harness
+  will not guess a target it registers a real runner against. The `local` tier
+  falls back to `$GITHUB_REPOSITORY` since it provisions with `--no-probe` and
+  never reaches GitHub.
+
 ### Fixed
 - **FIM hashing builds against `sha2` 0.11.** The digest type changed to
   `hybrid_array::Array`, which does not implement `LowerHex`, so
