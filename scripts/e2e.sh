@@ -15,20 +15,22 @@
 #          brick an empty allowlist (#71). Runs on every PR.
 #
 #   live   (LEGIONR_TOKEN)   Registers a REAL ephemeral runner against a scratch
-#          scope (default: OpenSource-For-Freedom/defcon), serves exactly one
-#          dispatched job, and asserts it succeeded, the work dir was wiped, and
-#          two consecutive jobs landed on DISTINCT runner names (single-use).
-#          Requires the scope's `legion-e2e-receiver` workflow (see
-#          .github/workflows/e2e.yml and the DEFCON receiver). Skips cleanly
-#          when no token is present.
+#          scope you control, serves exactly one dispatched job, and asserts it
+#          succeeded, the work dir was wiped, and two consecutive jobs landed on
+#          DISTINCT runner names (single-use). The scope is required: pass
+#          --scope owner/repo or set E2E_SCOPE. That repo's default branch must
+#          carry a `legion-e2e-receiver.yml` workflow for the harness to
+#          dispatch. Not wired into CI, run it by hand.
 #
 # Usage:
 #   scripts/e2e.sh --mode local
-#   LEGIONR_TOKEN=... scripts/e2e.sh --mode live [--scope owner/repo]
+#   LEGIONR_TOKEN=... scripts/e2e.sh --mode live --scope owner/repo
 set -euo pipefail
 
 MODE="local"
-SCOPE="${E2E_SCOPE:-OpenSource-For-Freedom/defcon}"
+# No default scope: live mode registers a real runner, so the target is always
+# named explicitly rather than inherited from a stale constant.
+SCOPE="${E2E_SCOPE:-}"
 BIN="${LEGIONR_BIN:-}"
 # Bound the live wait so a scheduling stall fails loudly instead of hanging CI.
 SERVE_TIMEOUT="${E2E_SERVE_TIMEOUT:-300}"
@@ -46,6 +48,16 @@ log()  { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[x]\033[0m %s\n' "$*" >&2; exit 1; }
 pass() { printf '\033[1;32m  ✔ %s\033[0m\n' "$*"; }
+
+# The local tier provisions with --no-probe and never reaches GitHub, so any
+# well-formed scope will do. The live tier registers a REAL runner, so refuse to
+# guess: name the target or don't run.
+if [ -z "$SCOPE" ]; then
+    if [ "$MODE" = "live" ]; then
+        die "live mode needs a target: pass --scope owner/repo or set E2E_SCOPE"
+    fi
+    SCOPE="${GITHUB_REPOSITORY:-Wraith-security/Legion_runner}"
+fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PREFIX="$(mktemp -d)"
