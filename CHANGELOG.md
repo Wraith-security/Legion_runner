@@ -61,6 +61,13 @@ Unreleased section.
   upstream resolver IP, file paths, captured hostnames, or env values.
 
 ### Fixed
+- **FIM hashing builds against `sha2` 0.11.** The digest type changed to
+  `hybrid_array::Array`, which does not implement `LowerHex`, so
+  `format!("{:x}", ..)` in `fim::hash_file` stopped compiling. The digest is now
+  hex-encoded byte by byte, which works on both 0.10 and 0.11. Two tests pin the
+  behaviour: the exact sha256 of `abc`, and a 64-char length/charset assertion so
+  a dropped leading zero cannot pass silently. Unblocks the `cargo-major`
+  dependency group (`sha2` 0.10.9 to 0.11.0, `thiserror` 1 to 2.0.18).
 - **Block mode no longer hangs the runner at teardown.** `applyEgressBlock`
   installed a default-deny `LEGION_EGRESS` chain in `OUTPUT` and nothing ever
   removed it, so the runner's own completion call (to rotating GitHub-backend IPs
