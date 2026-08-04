@@ -351,7 +351,7 @@ sudo ./scripts/install.sh
 # 2. Point a runner at a repo or org (credential never touches disk)
 #    Recommended: the Legion Runner GitHub App (keyless, no PAT). Install it on
 #    your org, then point legionr at the App ID + private key — see docs/github-app.md.
-export LEGIONR_APP_ID=2610838
+export LEGIONR_APP_ID=<your App ID>
 export LEGIONR_APP_PRIVATE_KEY_FILE=/etc/legion-runner/legion-app.pem
 #    …or use a classic token instead:
 # export LEGIONR_TOKEN=<PAT with manage-runners>
