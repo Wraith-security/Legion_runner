@@ -1,0 +1,105 @@
+name: E2E
+
+# End-to-end lifecycle coverage for the control plane. Unit tests prove the
+# pure builders; this proves the binary actually installs, provisions, hardens,
+# and (with credentials) serves a REAL single-use job and tears it down.
+#
+# Two jobs:
+#   local  — always runs. install -> provision -> harden -> install, asserting
+#            the deploy-blocker fixes (#71/#73/#74) in the generated + installed
+#            artifacts. No credentials.
+#   live   — gated on a GitHub App secret. Registers a real ephemeral runner
+#            against DEFCON, serves one dispatched job, and asserts single-use
+#            (job succeeds, work dir wiped, two jobs get distinct runner names).
+#            Skips cleanly when the secret is absent, so forks and secret-less
+#            runs stay green.
+#
+# This workflow is intentionally NOT part of the CI gate that cuts releases: a
+# scheduling stall on the live tier must never block a release. Promote the
+# `local` job into a required check if you want it to gate merges.
+
+on:
+  pull_request:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE']
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE']
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  local:
+    name: Local lifecycle e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-e2e-${{ hashFiles('**/Cargo.lock') }}
+      - name: install -> provision -> harden -> install
+        run: scripts/e2e.sh --mode local
+
+  live:
+    name: Live single-use e2e (DEFCON)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Job-level env lets us gate on the secret's presence (the `secrets` context
+    # is not available in `if:`, but `env` is).
+    env:
+      APP_ID: ${{ secrets.LEGION_E2E_APP_ID }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Gate on the App secret
+        id: gate
+        run: |
+          if [ -n "$APP_ID" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::LEGION_E2E_APP_ID not set — skipping the live DEFCON e2e."
+          fi
+      - name: Mint a short-lived installation token (DEFCON only)
+        if: steps.gate.outputs.run == 'true'
+        id: token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.LEGION_E2E_APP_ID }}
+          private-key: ${{ secrets.LEGION_E2E_APP_PRIVATE_KEY }}
+          owner: OpenSource-For-Freedom
+          repositories: defcon
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.gate.outputs.run == 'true'
+      - name: Cache cargo
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-e2e-${{ hashFiles('**/Cargo.lock') }}
+      - name: Serve one real single-use job against DEFCON
+        if: steps.gate.outputs.run == 'true'
+        env:
+          LEGIONR_TOKEN: ${{ steps.token.outputs.token }}
+        run: scripts/e2e.sh --mode live --scope OpenSource-For-Freedom/defcon

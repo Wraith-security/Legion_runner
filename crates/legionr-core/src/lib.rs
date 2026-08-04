@@ -25,6 +25,7 @@ pub mod github;
 pub mod harden;
 pub mod link;
 pub mod runner;
+pub mod tailscale;
 
 pub use config::{RunnerConfig, Scope};
 pub use container::ContainerBackend;

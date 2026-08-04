@@ -82,6 +82,11 @@ enum Commands {
         /// Instance name for the systemd template (`legionr@<name>`).
         #[arg(long, default_value = "default")]
         instance: String,
+        /// Emit only an atomic nftables transaction that refreshes the live
+        /// allow sets from freshly resolved IPs (for the refresh timer). Pipe
+        /// to `nft -f -`. Prints nothing if nothing resolved.
+        #[arg(long)]
+        refresh: bool,
     },
 
     /// Test (or repoint) the Legion desktop link.
@@ -120,7 +125,11 @@ async fn main() -> Result<()> {
             .await
         }
         Commands::Run { once } => run(cli.config, once).await,
-        Commands::Harden { install, instance } => harden(cli.config, install, &instance),
+        Commands::Harden {
+            install,
+            instance,
+            refresh,
+        } => harden(cli.config, install, &instance, refresh),
         Commands::Pair { link } => pair(cli.config, link).await,
         Commands::Status => status(cli.config).await,
         Commands::Doctor => doctor(cli.config),
@@ -229,9 +238,27 @@ async fn run(config: Option<PathBuf>, once: bool) -> Result<()> {
     Ok(())
 }
 
-fn harden(config: Option<PathBuf>, install: bool, instance: &str) -> Result<()> {
+fn harden(config: Option<PathBuf>, install: bool, instance: &str, refresh: bool) -> Result<()> {
     let cfg = load_config(config)?;
     let profile = HardeningProfile::new(&cfg);
+
+    // #72: the refresh timer re-resolves the allowlist and reloads the live nft
+    // set elements so they track GitHub's rotating IPs. Emit only the atomic
+    // transaction (to pipe into `nft -f -`); print nothing if nothing resolved,
+    // so we never flush the sets to empty and fence the host off.
+    if refresh {
+        let (v4, v6) = resolve_allow_ips(&profile.egress_hosts());
+        if v4.is_empty() && v6.is_empty() {
+            anyhow::bail!(
+                "refusing to refresh: no egress hostnames resolved (emitting a flush \
+                 now would empty the allow sets and take the host offline). Leaving the \
+                 existing sets in place; will retry on the next timer tick."
+            );
+        }
+        print!("{}", profile.nftables_refresh(&v4, &v6));
+        return Ok(());
+    }
+
     let unit = profile.systemd_unit();
     let sysctl = profile.sysctl_dropin();
     let nft = profile.nftables_ruleset();
@@ -262,12 +289,25 @@ fn harden(config: Option<PathBuf>, install: bool, instance: &str) -> Result<()> 
     write_root("/etc/systemd/system/legionr@.service", &unit)?;
     write_root("/etc/sysctl.d/99-legion-runner.conf", &sysctl)?;
     write_root("/etc/nftables.d/legion-runner.nft", &nft)?;
+    // #72: install the refresh timer so the allow sets track GitHub's rotating
+    // IPs instead of drifting until the default-deny policy drops valid egress.
+    write_root(
+        "/etc/systemd/system/legionr-egress-refresh@.service",
+        &profile.egress_refresh_service(),
+    )?;
+    write_root(
+        "/etc/systemd/system/legionr-egress-refresh@.timer",
+        &profile.egress_refresh_timer(),
+    )?;
     println!(
         "✔ installed hardening artifacts ({} IPv4 + {} IPv6 egress IPs allowed)",
         v4.len(),
         v6.len()
     );
     println!("  enable: systemctl daemon-reload && systemctl enable --now legionr@{instance}");
+    println!(
+        "  refresh: systemctl enable --now legionr-egress-refresh@{instance}.timer  # tracks GitHub IP rotation"
+    );
     println!("  sysctl: sysctl --system");
     Ok(())
 }
