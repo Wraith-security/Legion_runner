@@ -78,6 +78,13 @@ table inet legionr {
 }
 EOF
     log "nftables egress allowlist active ($(echo "$HOSTS" | wc -w) hosts)"
+
+    # Keep the allow sets fresh as GitHub rotates endpoint IPs: enable the timer
+    # that re-resolves and atomically reloads the set elements every 15 minutes.
+    # Only meaningful once the table exists, so it lives in the firewall branch.
+    log "enabling egress-refresh timer (tracks GitHub IP rotation)"
+    systemctl enable --now "legionr-egress-refresh@${INSTANCE}.timer" 2>/dev/null \
+        || log "note: could not enable refresh timer (run 'legionr harden --install' as root first)"
 else
     log "skipping firewall (--no-firewall)"
 fi

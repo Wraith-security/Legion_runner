@@ -43,7 +43,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Harden runner (Legion)
-        uses: Wraith-security/legion_runner@v1.0.43   # Marketplace action
+        uses: Wraith-security/legion_runner@v1.0.47   # Marketplace action
         with:
           # audit (monitor, don't firewall) + dns-capture ON to NAME destinations:
           # @v1 (>= 1.0.35) carries the teardown + systemd-resolved fixes, so
@@ -109,7 +109,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Harden runner (Legion)
-        uses: Wraith-security/legion_runner@v1.0.43   # dogfood our own action (audit)
+        uses: Wraith-security/legion_runner@v1.0.47   # dogfood our own action (audit)
         with:
           egress-policy: audit       # monitor only; never breaks the build
           ebpf: 'auto'
@@ -145,7 +145,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Harden runner (Legion)
-        uses: Wraith-security/legion_runner@v1.0.43   # dogfood our own action (audit)
+        uses: Wraith-security/legion_runner@v1.0.47   # dogfood our own action (audit)
         with:
           egress-policy: audit
           ebpf: 'auto'
@@ -174,7 +174,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Harden runner (Legion)
-        uses: Wraith-security/legion_runner@v1.0.43   # dogfood our own action (audit)
+        uses: Wraith-security/legion_runner@v1.0.47   # dogfood our own action (audit)
         with:
           egress-policy: audit
           ebpf: 'auto'
@@ -185,7 +185,7 @@ jobs:
       # compiles it and pulls its whole dependency tree from crates.io — one
       # flaky download there fails the job, as it did with a transient TLS EOF).
       - name: Install cargo-audit (prebuilt)
-        uses: taiki-e/install-action@v2.83.2
+        uses: taiki-e/install-action@v2.85.1
         with:
           tool: cargo-audit
       - name: Audit dependencies
@@ -209,7 +209,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Harden runner (Legion)
-        uses: Wraith-security/legion_runner@v1.0.43   # dogfood our own action (audit)
+        uses: Wraith-security/legion_runner@v1.0.47   # dogfood our own action (audit)
         with:
           egress-policy: audit
           ebpf: 'auto'
