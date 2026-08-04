@@ -1,0 +1,46 @@
+name: legion-e2e-receiver
+
+# Target for the live end-to-end harness (`scripts/e2e.sh --mode live`).
+#
+# The harness provisions an ephemeral Legion runner carrying a unique label,
+# dispatches THIS workflow with that label, and asserts the job was served, the
+# work dir was wiped, and a second job landed on a DIFFERENT runner name. The
+# job body is deliberately trivial: what is under test is the runner lifecycle,
+# not the work.
+#
+# Nothing here runs on a schedule or on push. It only fires on workflow_dispatch,
+# which requires write access to this repo, so a fork cannot aim a job at a
+# self-hosted runner.
+
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: Unique runner label the harness provisioned
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  serve:
+    name: Served by an ephemeral Legion runner
+    # Targets the one-shot label the harness minted, so this job can only be
+    # picked up by that specific runner.
+    runs-on: ${{ inputs.label }}
+    timeout-minutes: 10
+    steps:
+      - name: Report the runner that served this job
+        run: |
+          echo "runner name : ${RUNNER_NAME:-unknown}"
+          echo "runner os   : ${RUNNER_OS:-unknown}"
+          echo "workspace   : ${GITHUB_WORKSPACE:-unset}"
+          echo "label       : ${{ inputs.label }}"
+      - name: Prove the job can do real work
+        run: |
+          # A single-use runner is only useful if a job can actually write to
+          # its work dir. Write, read back, and let teardown wipe it.
+          printf 'legion-e2e\n' > proof.txt
+          test "$(cat proof.txt)" = "legion-e2e"
+          echo "wrote and read back a file in the work dir"
