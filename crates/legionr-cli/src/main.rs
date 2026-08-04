@@ -188,7 +188,7 @@ async fn provision(
     cfg.validate()?;
 
     if !no_probe {
-        match GitHubClient::from_env() {
+        match GitHubClient::from_env_for_scope(&scope).await {
             Ok(gh) => match gh.probe().await {
                 Ok(()) => println!("✔ GitHub API reachable and token accepted"),
                 Err(e) => println!("⚠ GitHub probe failed: {e}\n  (config still written; fix the token before `legionr run`)"),
@@ -210,11 +210,16 @@ async fn provision(
 
 async fn run(config: Option<PathBuf>, once: bool) -> Result<()> {
     let cfg = load_config(config)?;
-    let gh = GitHubClient::from_env()?;
+    let scope = cfg.scope.clone();
     let link = LegionLink::new(cfg.legion_link.clone());
     let runner = Runner::new(cfg);
 
     loop {
+        // Resolve the credential per iteration: with GitHub App auth the
+        // installation token is short-lived (~1h), so minting a fresh one before
+        // each job keeps a long-running pool authenticated. With a static token
+        // this just rebuilds the client, which is cheap.
+        let gh = GitHubClient::from_env_for_scope(&scope).await?;
         let outcome = runner.run_once(&gh, &link).await?;
         tracing::info!(
             runner = %outcome.runner,
@@ -377,12 +382,12 @@ async fn status(config: Option<PathBuf>) -> Result<()> {
     println!("  link:      {}", display_link(&cfg.legion_link));
 
     print!("  github:    ");
-    match GitHubClient::from_env() {
+    match GitHubClient::from_env_for_scope(&cfg.scope).await {
         Ok(gh) => match gh.probe().await {
             Ok(()) => println!("reachable, token OK"),
             Err(e) => println!("error — {e}"),
         },
-        Err(e) => println!("no token — {e}"),
+        Err(e) => println!("no credential — {e}"),
     }
     Ok(())
 }
@@ -400,10 +405,14 @@ fn doctor(config: Option<PathBuf>) -> Result<()> {
         }
     };
 
+    let has_app = legionr_core::app_auth::AppAuth::from_env()
+        .ok()
+        .flatten()
+        .is_some();
     check(
-        "GitHub token present",
-        token_from_env().is_ok(),
-        "export LEGIONR_TOKEN (PAT with manage-runners)",
+        "GitHub credential present",
+        token_from_env().is_ok() || has_app,
+        "export LEGIONR_TOKEN (PAT), or set LEGIONR_APP_ID + LEGIONR_APP_PRIVATE_KEY (see docs/github-app.md)",
         &mut ok,
     );
     check(
