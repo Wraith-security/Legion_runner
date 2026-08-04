@@ -333,7 +333,9 @@ removes the persistence surface entirely:
 sudo ./scripts/install.sh
 
 # 2. Point a runner at a repo or org (token never touches disk)
-export LEGIONR_TOKEN=<github PAT with manage-runners>
+#    Recommended: a "Legion Runner" GitHub App installed on your org, minting
+#    short-lived installation tokens instead of a PAT. See docs/github-app.md.
+export LEGIONR_TOKEN=<github App installation token, or a PAT with manage-runners>
 sudo -u legionr -E legionr provision Wraith-security/legion_runner \
      --config /etc/legion-runner/default.json \
      --container podman \
@@ -387,7 +389,9 @@ Verify the unit's exposure with `systemd-analyze security legionr@default`.
 - Linux with systemd (and `nftables` for the egress firewall).
 - [Rust](https://rustup.rs) 1.78+ to build `legionr`.
 - `curl`, `tar`; optionally `podman` or `docker` for the per-job sandbox.
-- A GitHub PAT (or app token) with permission to manage runners on the scope.
+- A credential that can manage runners on the scope. Recommended: a **Legion
+  Runner GitHub App** installed on your org ([docs/github-app.md](docs/github-app.md));
+  a PAT with `manage-runners` also works.
 
 ## Build & test
 
