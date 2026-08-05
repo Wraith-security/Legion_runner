@@ -52,6 +52,30 @@ struct InstallationToken {
     token: String,
 }
 
+/// One place the App is installed, for `legionr doctor`.
+#[derive(Debug, Deserialize)]
+pub struct InstallationInfo {
+    pub id: u64,
+    #[serde(default)]
+    pub account: Option<Account>,
+    /// `"all"` or `"selected"`.
+    #[serde(default)]
+    pub repository_selection: Option<String>,
+}
+
+/// The account (user or org) an installation belongs to.
+#[derive(Debug, Deserialize)]
+pub struct Account {
+    pub login: String,
+}
+
+/// Result of [`AppAuth::preflight`]: where the App is installed, and whether a
+/// token could be minted for the target scope.
+pub struct Preflight {
+    pub installations: Result<Vec<InstallationInfo>, String>,
+    pub token: Result<(), String>,
+}
+
 impl AppAuth {
     /// Read App auth from the environment. Returns `Ok(None)` when
     /// `LEGIONR_APP_ID` is unset (App auth simply isn't configured).
@@ -130,6 +154,66 @@ impl AppAuth {
             .await
             .context("parsing the installation token response")?;
         Ok(parsed.token)
+    }
+
+    /// Self-contained live preflight for `legionr doctor`: build a client, list
+    /// the App's installations, and try to mint a token for `scope`. Each half
+    /// is reported independently (as `Result<_, String>`) so a failure in one
+    /// still shows the other. Keeps `reqwest` types out of the CLI crate.
+    pub async fn preflight(&self, scope: &Scope) -> Preflight {
+        let http = match reqwest::Client::builder()
+            .user_agent(crate::user_agent())
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                let msg = format!("building HTTP client: {e}");
+                return Preflight {
+                    installations: Err(msg.clone()),
+                    token: Err(msg),
+                };
+            }
+        };
+        // `{:#}` renders the full anyhow context chain (e.g. GitHub's 401 message),
+        // not just the outermost context — the useful part for a diagnostic.
+        let installations = self
+            .list_installations(&http)
+            .await
+            .map_err(|e| format!("{e:#}"));
+        let token = self
+            .installation_token(&http, scope)
+            .await
+            .map(|_| ())
+            .map_err(|e| format!("{e:#}"));
+        Preflight {
+            installations,
+            token,
+        }
+    }
+
+    /// List every installation of this App (which accounts/orgs it's on, and
+    /// whether each grants all repos or a selection). Used by `legionr doctor`
+    /// to answer "is my App set up right, and where?".
+    pub async fn list_installations(
+        &self,
+        http: &reqwest::Client,
+    ) -> Result<Vec<InstallationInfo>> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let jwt = self.make_jwt(now)?;
+        let url = format!("{API_ROOT}/app/installations?per_page=100");
+        let resp = self
+            .app_request(http.get(&url), &jwt)
+            .send()
+            .await
+            .context("listing App installations")?;
+        let resp = ensure_ok(resp, "list installations").await?;
+        resp.json()
+            .await
+            .context("parsing the installations response")
     }
 
     /// Find the installation id for a scope, using the App JWT.

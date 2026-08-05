@@ -132,7 +132,7 @@ async fn main() -> Result<()> {
         } => harden(cli.config, install, &instance, refresh),
         Commands::Pair { link } => pair(cli.config, link).await,
         Commands::Status => status(cli.config).await,
-        Commands::Doctor => doctor(cli.config),
+        Commands::Doctor => doctor(cli.config).await,
     }
 }
 
@@ -396,7 +396,7 @@ async fn status(config: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-fn doctor(config: Option<PathBuf>) -> Result<()> {
+async fn doctor(config: Option<PathBuf>) -> Result<()> {
     let cfg = load_config(config)?;
     let mut ok = true;
 
@@ -409,13 +409,10 @@ fn doctor(config: Option<PathBuf>) -> Result<()> {
         }
     };
 
-    let has_app = legionr_core::app_auth::AppAuth::from_env()
-        .ok()
-        .flatten()
-        .is_some();
+    let app = legionr_core::app_auth::AppAuth::from_env().ok().flatten();
     check(
         "GitHub credential present",
-        token_from_env().is_ok() || has_app,
+        token_from_env().is_ok() || app.is_some(),
         "export LEGIONR_TOKEN (PAT), or set LEGIONR_APP_ID + LEGIONR_APP_PRIVATE_KEY (see docs/github-app.md)",
         &mut ok,
     );
@@ -445,6 +442,43 @@ fn doctor(config: Option<PathBuf>) -> Result<()> {
             "install the container runtime or switch backend",
             &mut ok,
         );
+    }
+
+    // Live GitHub App preflight: only when App auth is configured. This is the
+    // error-prone part of setup ("did I install it? on the right org? can it
+    // mint a token for this scope?"), so validate it against the live API.
+    if let Some(app) = &app {
+        println!("\nGitHub App:");
+        let report = app.preflight(&cfg.scope).await;
+        match &report.installations {
+            Ok(installs) if !installs.is_empty() => {
+                for i in installs {
+                    let who = i.account.as_ref().map(|a| a.login.as_str()).unwrap_or("?");
+                    let repos = i.repository_selection.as_deref().unwrap_or("?");
+                    println!(
+                        "  ✔ installed on {who} (installation {}, repos: {repos})",
+                        i.id
+                    );
+                }
+            }
+            Ok(_) => {
+                println!("  ✗ the App is not installed anywhere — open the App page → Install App");
+                ok = false;
+            }
+            Err(e) => {
+                println!("  ✗ could not list installations — {e}");
+                ok = false;
+            }
+        }
+
+        let scope_url = cfg.scope.registration_url();
+        match &report.token {
+            Ok(()) => println!("  ✔ minted an installation token for {scope_url}"),
+            Err(e) => {
+                println!("  ✗ could not mint a token for {scope_url} — {e}");
+                ok = false;
+            }
+        }
     }
 
     if ok {
