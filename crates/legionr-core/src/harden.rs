@@ -81,6 +81,12 @@ impl<'a> HardeningProfile<'a> {
              # One job, then exit. Restart=always immediately provisions a fresh\n\
              # ephemeral runner, so a single unit yields a continuous single-use pool.\n\
              ExecStart=/usr/local/bin/legionr run --once --config /etc/legion-runner/%i.json\n\
+             # Credential for runner registration, loaded from a root-owned env\n\
+             # file (services do not inherit a shell env). Put the GitHub App\n\
+             # config here — LEGIONR_APP_ID + LEGIONR_APP_PRIVATE_KEY_FILE — or a\n\
+             # LEGIONR_TOKEN. Optional (leading '-'): the unit still starts if the\n\
+             # file is absent, e.g. when the credential is provided another way.\n\
+             EnvironmentFile=-/etc/legion-runner/%i.env\n\
              Restart=always\n\
              RestartSec=2\n\
              TimeoutStopSec=90\n\
@@ -330,6 +336,8 @@ mod tests {
             "User=legionr",
             "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
             "TasksMax=512",
+            // Optional credential env file (GitHub App / token) for the service.
+            "EnvironmentFile=-/etc/legion-runner/%i.env",
         ] {
             assert!(unit.contains(needle), "unit missing: {needle}");
         }

@@ -103,8 +103,8 @@ directly outside one.
 private key and it mints (and, in the `run` loop, refreshes) its own
 installation tokens. No PAT, and no external token-minting helper on the host.
 
-Set these in the environment (e.g. `/etc/legion-runner/<instance>.env`, loaded
-by the systemd unit with `EnvironmentFile=`):
+The generated unit already loads `EnvironmentFile=-/etc/legion-runner/<instance>.env`,
+so you just create that file (root-owned, `0600`) with the credential:
 
 ```sh
 LEGIONR_APP_ID=<your App ID, from the App's General page>

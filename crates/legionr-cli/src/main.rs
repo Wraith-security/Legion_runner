@@ -309,6 +309,10 @@ fn harden(config: Option<PathBuf>, install: bool, instance: &str, refresh: bool)
         "  refresh: systemctl enable --now legionr-egress-refresh@{instance}.timer  # tracks GitHub IP rotation"
     );
     println!("  sysctl: sysctl --system");
+    println!(
+        "  creds:  put the GitHub App config (LEGIONR_APP_ID + LEGIONR_APP_PRIVATE_KEY_FILE)\n\
+        \x20         or LEGIONR_TOKEN in /etc/legion-runner/{instance}.env  (root-owned, 0600) — see docs/github-app.md"
+    );
     Ok(())
 }
 
