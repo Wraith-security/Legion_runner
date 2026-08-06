@@ -8,10 +8,12 @@ yanked = "deny"
 ignore = []
 
 [bans]
-# Surface (do not hard-fail on) duplicate transitive versions and wildcard
-# version requirements — useful signal without blocking routine updates.
+# Duplicate transitive versions are a warning (useful signal, too noisy to fail
+# routine updates on). Wildcard version requirements are DENIED: we pin every
+# dependency through Cargo.lock and never use "*", so a wildcard slipping in
+# (which would silently pull whatever a registry serves) fails the build.
 multiple-versions = "warn"
-wildcards = "warn"
+wildcards = "deny"
 deny = []
 
 [sources]

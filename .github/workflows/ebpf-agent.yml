@@ -32,7 +32,7 @@ jobs:
       run:
         working-directory: agent
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Harden runner (Legion)
         uses: Wraith-security/legion_runner@v1.0.47   # dogfood our own action (audit)
@@ -43,8 +43,9 @@ jobs:
           job-summary: 'false'   # self-test, not a report: keep it out of the summary
 
       - name: Install nightly + rust-src
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@7c8d7d138f5c09cef361f8214cf96882cd029cdb # nightly
         with:
+          toolchain: nightly
           components: rust-src, clippy, rustfmt
 
       - name: Install bpf-linker
