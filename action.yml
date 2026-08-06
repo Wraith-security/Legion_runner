@@ -1,5 +1,5 @@
 name: 'Legion Runner'
-description: 'Stop CI supply chain attacks: monitor and block outbound traffic from GitHub Actions jobs, with process attribution.'
+description: 'Block CI supply-chain attacks: firewall egress, attribute connections to processes with eBPF, and detect file tampering.'
 author: 'Legion'
 branding:
   icon: 'shield'
