@@ -36,7 +36,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Harden runner (Legion, BLOCK)
-        uses: Wraith-security/legion_runner@v1.0.47   # dogfood our own action (enforce)
+        uses: Wraith-security/legion_runner@v1.0.51   # dogfood our own action (enforce)
         with:
           egress-policy: block
           # Curated per-ecosystem allowlists for the toolchains this build uses.
