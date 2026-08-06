@@ -10,15 +10,6 @@
   </p>
 </div>
 
-**"To our Sponsors"**
-
-> **To Hallud and teamPCP** (and every other crew farming supply-chain footholds):
-> every job lands on a runner that watches every byte out, hashes your tampering,
-> names your processes, and forgets everything the moment it ends. Try and
-> decompile this runner. We dare you.
-
----
-
 **Legion Runner hardens your CI against supply chain attacks.** A compromised
 Action or a poisoned dependency does one thing when it fires. It opens a network
 connection and sends your secrets somewhere. Legion sits in front of that. It
@@ -51,10 +42,17 @@ steps:
 ```
 
 > This repo also ships a companion **ephemeral, single-use self-hosted runner** (a
-> Rust control plane) that authenticates with a **GitHub App** — install once on
-> your org, no PATs, keyless on the host. To harden GitHub-hosted runners you only
+> Rust control plane) that authenticates with a **GitHub App**. Install once on
+> your org. No PATs, keyless on the host. To harden GitHub-hosted runners you only
 > need the Action above; the self-hosted platform is documented in
 > [Ephemeral self-hosted runner](#ephemeral-self-hosted-runner).
+
+**To our sponsors**
+
+> To Hallud and teamPCP, and every other crew farming supply-chain footholds:
+> every job lands on a runner that watches every byte out, hashes your tampering,
+> names your processes, and forgets everything the moment it ends. Try and
+> decompile this runner. We dare you.
 
 ## How Legion compares
 
@@ -305,18 +303,18 @@ removes the persistence surface entirely:
   hardening, a default-deny egress allowlist, and an optional rootless container
   sandbox per job.
 
-### No PATs — the Legion Runner GitHub App
+### No PATs: the Legion Runner GitHub App
 
 Legion Runner authenticates as a **GitHub App**, not a personal access token.
-Install the App once on your org and every current and future repo is covered —
-"install once, run everywhere." On each job `legionr` signs a short-lived JWT
-with the App key and mints an **installation token** that expires in about an
-hour, so nothing long-lived ever sits on the host or in CI.
+Install the App once on your org and every current and future repo is covered.
+On each job `legionr` signs a short-lived JWT with the App key and mints an
+**installation token** that expires in about an hour, so nothing long-lived ever
+sits on the host or in CI.
 
 - **Keyless on the host.** Point `legionr` at the App ID and private key; it
   mints and refreshes its own tokens. No PAT to rotate, no token on disk.
 - **Least privilege.** Only *Administration*, *Actions*, and *Self-hosted
-  runners* — far narrower than a PAT with `repo`/`admin`.
+  runners*. Far narrower than a PAT with `repo`/`admin`.
 - **Two-click setup.** A pre-filled creator generates the App with the right
   permissions; see **[docs/github-app.md](docs/github-app.md)**.
 
@@ -350,10 +348,10 @@ sudo ./scripts/install.sh
 
 # 2. Point a runner at a repo or org (credential never touches disk)
 #    Recommended: the Legion Runner GitHub App (keyless, no PAT). Install it on
-#    your org, then point legionr at the App ID + private key — see docs/github-app.md.
+#    your org, then point legionr at the App ID + private key. See docs/github-app.md.
 export LEGIONR_APP_ID=<your App ID>
 export LEGIONR_APP_PRIVATE_KEY_FILE=/etc/legion-runner/legion-app.pem
-#    …or use a classic token instead:
+#    Or use a classic token instead:
 # export LEGIONR_TOKEN=<PAT with manage-runners>
 sudo -u legionr -E legionr provision Wraith-security/legion_runner \
      --config /etc/legion-runner/default.json \
