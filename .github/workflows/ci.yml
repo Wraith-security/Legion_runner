@@ -43,7 +43,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Harden runner (Legion)
-        uses: Wraith-security/legion_runner@v1.0.51   # Marketplace action
+        uses: Wraith-security/legion_runner@v1.0.56   # Marketplace action
         with:
           # audit (monitor, don't firewall) + dns-capture ON to NAME destinations:
           # @v1 (>= 1.0.35) carries the teardown + systemd-resolved fixes, so
@@ -110,7 +110,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Harden runner (Legion)
-        uses: Wraith-security/legion_runner@v1.0.51   # dogfood our own action (audit)
+        uses: Wraith-security/legion_runner@v1.0.56   # dogfood our own action (audit)
         with:
           egress-policy: audit       # monitor only; never breaks the build
           ebpf: 'auto'
@@ -146,7 +146,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Harden runner (Legion)
-        uses: Wraith-security/legion_runner@v1.0.51   # dogfood our own action (audit)
+        uses: Wraith-security/legion_runner@v1.0.56   # dogfood our own action (audit)
         with:
           egress-policy: audit
           ebpf: 'auto'
@@ -175,7 +175,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Harden runner (Legion)
-        uses: Wraith-security/legion_runner@v1.0.51   # dogfood our own action (audit)
+        uses: Wraith-security/legion_runner@v1.0.56   # dogfood our own action (audit)
         with:
           egress-policy: audit
           ebpf: 'auto'
@@ -188,7 +188,7 @@ jobs:
       # compiles it and pulls its whole dependency tree from crates.io — one
       # flaky download there fails the job, as it did with a transient TLS EOF).
       - name: Install cargo-audit (prebuilt)
-        uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf # v2.85.5
+        uses: taiki-e/install-action@cb33e69fad06166ca28a42b2575e4dadabf62ee8 # v2.85.8
         with:
           tool: cargo-audit
       - name: Audit dependencies
@@ -212,7 +212,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Harden runner (Legion)
-        uses: Wraith-security/legion_runner@v1.0.51   # dogfood our own action (audit)
+        uses: Wraith-security/legion_runner@v1.0.56   # dogfood our own action (audit)
         with:
           egress-policy: audit
           ebpf: 'auto'
