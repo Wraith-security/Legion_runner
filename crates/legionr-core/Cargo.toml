@@ -5,6 +5,7 @@ edition.workspace     = true
 authors.workspace     = true
 license.workspace     = true
 description           = "Core engine: GitHub JIT API, ephemeral runner lifecycle, systemd hardening, Legion link"
+publish     = false   # distributed via GitHub releases, never crates.io
 
 [dependencies]
 tokio       = { workspace = true }
