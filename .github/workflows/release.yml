@@ -162,16 +162,17 @@ jobs:
         with:
           toolchain: nightly
           components: rust-src
-      - name: Install bpf-linker
-        # Compiled against the toolchain's LLVM; retry to ride out transient
-        # crates.io download failures.
-        run: |
-          for i in 1 2 3; do
-            cargo install bpf-linker --locked && exit 0
-            echo "bpf-linker install attempt $i failed; retrying in $((i*10))s"
-            sleep $((i*10))
-          done
-          echo "bpf-linker install failed after 3 attempts"; exit 1
+      - name: Install cargo-binstall
+        uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2.85.1
+        with:
+          tool: cargo-binstall
+      - name: Install bpf-linker (prebuilt)
+        # Prebuilt binary, not `cargo install`. Building bpf-linker from source
+        # compiles llvm-sys against a system LLVM matching its pinned version
+        # (LLVM 23 via llvm-sys 231), which the runner does not have; the prebuilt
+        # binary ships its own. --disable-strategies compile makes a missing
+        # prebuilt fail loudly instead of falling back to the broken source build.
+        run: cargo binstall --no-confirm --disable-strategies compile bpf-linker
       - name: Build agent (release)
         run: cargo build --release
       - name: Attach binary + checksum to the release

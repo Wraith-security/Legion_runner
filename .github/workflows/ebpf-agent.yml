@@ -48,8 +48,16 @@ jobs:
           toolchain: nightly
           components: rust-src, clippy, rustfmt
 
-      - name: Install bpf-linker
-        run: cargo install bpf-linker --locked
+      - name: Install cargo-binstall
+        uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2.85.1
+        with:
+          tool: cargo-binstall
+      - name: Install bpf-linker (prebuilt)
+        # Use the prebuilt binary, not `cargo install`. `cargo install bpf-linker`
+        # compiles llvm-sys, which needs a system LLVM matching bpf-linker's
+        # pinned version (currently LLVM 23 via llvm-sys 231); the runner has no
+        # such llvm-config, so the build fails. The prebuilt binary ships its own.
+        run: cargo binstall --no-confirm --disable-strategies compile bpf-linker
 
       - name: Userspace unit tests (no kernel needed)
         run: cargo test -p legionr-bpf

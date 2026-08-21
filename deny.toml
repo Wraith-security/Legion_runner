@@ -10,10 +10,14 @@ ignore = []
 [bans]
 # Duplicate transitive versions are a warning (useful signal, too noisy to fail
 # routine updates on). Wildcard version requirements are DENIED: we pin every
-# dependency through Cargo.lock and never use "*", so a wildcard slipping in
-# (which would silently pull whatever a registry serves) fails the build.
+# external dependency through Cargo.lock and never use "*", so a wildcard
+# slipping in (which would silently pull whatever a registry serves) fails the
+# build. allow-wildcard-paths permits the ONE benign case: our own workspace
+# crates referenced by { path = ... } with no version (legionr-cli/-fim ->
+# legionr-core), which are local, not a registry pull.
 multiple-versions = "warn"
 wildcards = "deny"
+allow-wildcard-paths = true
 deny = []
 
 [sources]
