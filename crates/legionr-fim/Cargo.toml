@@ -5,6 +5,7 @@ edition.workspace     = true
 authors.workspace     = true
 license.workspace     = true
 description           = "Legion Runner file-integrity agent: snapshot + diff of tamper targets for the Harden Runner action"
+publish     = false   # distributed via GitHub releases, never crates.io
 
 [[bin]]
 name = "legionr-fim"

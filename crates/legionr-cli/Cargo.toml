@@ -5,6 +5,7 @@ edition.workspace     = true
 authors.workspace     = true
 license.workspace     = true
 description           = "Legion Runner – command-line control plane"
+publish     = false   # distributed via GitHub releases, never crates.io
 
 [[bin]]
 name = "legionr"
