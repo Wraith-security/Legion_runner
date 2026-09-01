@@ -54,7 +54,7 @@ jobs:
           key: ${{ runner.os }}-cargo-block-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Harden runner (Legion, BLOCK)
-        uses: Wraith-security/legion_runner@v1.0.58   # dogfood our own action (enforce)
+        uses: Wraith-security/legion_runner@v1.0.60   # dogfood our own action (enforce)
         with:
           egress-policy: block
           # Curated per-ecosystem allowlists for the dependency fetch/build.

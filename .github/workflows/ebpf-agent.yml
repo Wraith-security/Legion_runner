@@ -35,7 +35,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Harden runner (Legion)
-        uses: Wraith-security/legion_runner@v1.0.58   # dogfood our own action (audit)
+        uses: Wraith-security/legion_runner@v1.0.60   # dogfood our own action (audit)
         with:
           egress-policy: audit
           ebpf: 'off'
@@ -49,7 +49,7 @@ jobs:
           components: rust-src, clippy, rustfmt
 
       - name: Install cargo-binstall
-        uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2.86.3
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
         with:
           tool: cargo-binstall
       - name: Install bpf-linker (prebuilt)
