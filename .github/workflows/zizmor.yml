@@ -1,0 +1,44 @@
+name: Workflow security (zizmor)
+
+# Static security analysis of every GitHub Actions workflow with zizmor
+# (https://docs.zizmor.sh). Blocking gate: fails on medium+ findings, which
+# covers template injection, credential persistence (artipacked), unpinned
+# third-party actions, spoofable bot-actor gates, and dangerous triggers.
+# Informational/low findings (e.g. our own outputs interpolated in run blocks)
+# are reported but do not fail the build. Config and the documented, reviewed
+# exceptions live in .github/zizmor.yml.
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/**', '.github/zizmor.yml']
+  push:
+    branches: [main]
+    paths: ['.github/workflows/**', '.github/zizmor.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  zizmor:
+    name: Analyze workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Harden runner (Legion)
+        uses: Wraith-security/legion_runner@v1.0.61   # dogfood our own action (audit)
+        with:
+          egress-policy: audit
+          ebpf: 'auto'
+          dns-capture: 'true'
+          job-summary: 'false'
+
+      - name: Run zizmor (fail on medium+)
+        # pipx is preinstalled on ubuntu-latest; pin the zizmor version so the
+        # gate is reproducible and a new zizmor release can't move it under us.
+        run: pipx run zizmor==1.30.1 --min-severity medium .github/workflows/

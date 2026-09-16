@@ -45,7 +45,9 @@ jobs:
       # The exact commit CI validated (workflow_run) or the dispatch target.
       SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # This checkout pushes the moving major tag (git push, below), so it needs
+      # the persisted credentials; persist-credentials: false would break it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7  # zizmor: ignore[artipacked]
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
@@ -59,6 +61,8 @@ jobs:
 
       - name: Compute next version
         id: ver
+        env:
+          BUMP_INPUT: ${{ github.event.inputs.bump || '' }}
         run: |
           set -euo pipefail
           echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
@@ -67,7 +71,7 @@ jobs:
                     | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)"
 
           # Bump precedence: dispatch input → commit-message marker → patch.
-          bump="${{ github.event.inputs.bump || '' }}"
+          bump="${BUMP_INPUT}"
           if [ -z "$bump" ]; then
             msg="$(git log -1 --format=%B "$SHA" 2>/dev/null || true)"
             case "$msg" in
@@ -151,6 +155,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.release.outputs.sha }}
+          persist-credentials: false
       - name: Harden runner (Legion)
         uses: Wraith-security/legion_runner@v1.0.61   # dogfood our own action (audit)
         with:
@@ -194,6 +199,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.release.outputs.sha }}
+          persist-credentials: false
       - name: Harden runner (Legion)
         uses: Wraith-security/legion_runner@v1.0.61   # dogfood our own action (audit)
         with:
