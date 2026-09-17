@@ -41,6 +41,8 @@ jobs:
     timeout-minutes: 20   # hard cap: never let a hung job run to the 6h default
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Harden runner (Legion)
         uses: Wraith-security/legion_runner@v1.0.61   # Marketplace action
@@ -108,6 +110,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Harden runner (Legion)
         uses: Wraith-security/legion_runner@v1.0.61   # dogfood our own action (audit)
@@ -145,6 +149,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Harden runner (Legion)
         uses: Wraith-security/legion_runner@v1.0.61   # dogfood our own action (audit)
         with:
@@ -174,6 +180,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Harden runner (Legion)
         uses: Wraith-security/legion_runner@v1.0.61   # dogfood our own action (audit)
         with:
@@ -211,6 +219,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Harden runner (Legion)
         uses: Wraith-security/legion_runner@v1.0.61   # dogfood our own action (audit)
         with:
@@ -244,6 +254,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Download per-job egress reports
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:

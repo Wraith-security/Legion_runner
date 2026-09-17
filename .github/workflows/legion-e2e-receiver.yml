@@ -32,11 +32,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Report the runner that served this job
+        env:
+          LABEL: ${{ inputs.label }}
         run: |
           echo "runner name : ${RUNNER_NAME:-unknown}"
           echo "runner os   : ${RUNNER_OS:-unknown}"
           echo "workspace   : ${GITHUB_WORKSPACE:-unset}"
-          echo "label       : ${{ inputs.label }}"
+          echo "label       : ${LABEL}"
       - name: Prove the job can do real work
         run: |
           # A single-use runner is only useful if a job can actually write to

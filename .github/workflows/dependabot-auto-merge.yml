@@ -21,7 +21,10 @@ permissions:
 
 jobs:
   auto-merge:
-    if: github.actor == 'dependabot[bot]'
+    # Gate on the PR author, not github.actor: actor is spoofable via other
+    # triggers, whereas pull_request.user.login is the real opener (zizmor
+    # bot-conditions). fetch-metadata below further validates it's Dependabot.
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Fetch Dependabot metadata
