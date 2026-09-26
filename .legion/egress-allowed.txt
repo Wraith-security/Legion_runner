@@ -1,0 +1,30 @@
+# Legion Runner CI egress allowlist (block mode / default-deny).
+#
+# Every job in .github/workflows/ci.yml runs the Legion action with
+# egress-policy: block, so anything a build step reaches that is NOT below
+# (and not covered by allow-github or an allowed-presets entry) is dropped at
+# the firewall and named in that job's Legion summary. If a block run fails on
+# a blocked host, read the summary, confirm the host is legitimate, and add it
+# here with a one-line reason.
+#
+# GitHub + Actions endpoints (github.com, api.github.com, codeload,
+# objects.githubusercontent.com, the pipelines/results receivers) are always
+# allowed via allow-github and are not repeated here. Ecosystem toolchains come
+# from allowed-presets (cargo, rust, apt) per job. This file holds the
+# infrastructure and toolchain hosts those two do not cover.
+
+# Rust toolchain installer and the crates.io registry + CDN. Also implied by the
+# cargo/rust presets; listed explicitly so the file reads as the whole intent.
+static.rust-lang.org
+index.crates.io
+static.crates.io
+crates.io
+
+# GitHub Actions runner infrastructure: the actions/cache restore-save and the
+# upload/download-artifact steps store blobs on Azure, and some Actions internals
+# resolve here. Not covered by allow-github or any preset.
+blob.core.windows.net
+actions.githubusercontent.com
+
+# actions/setup-node fetches the Node runtime from nodejs.org (action-unit-tests job).
+nodejs.org
