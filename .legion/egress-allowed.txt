@@ -28,3 +28,7 @@ actions.githubusercontent.com
 
 # actions/setup-node fetches the Node runtime from nodejs.org (action-unit-tests job).
 nodejs.org
+
+# gh release upload sends release assets to uploads.github.com, which is not in
+# the built-in GitHub seed. Needed by release.yml only; harmless for other jobs.
+uploads.github.com

@@ -33,10 +33,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - name: Harden runner (Legion)
-        uses: Wraith-security/legion_runner@v1.0.61   # dogfood our own action (audit)
+      - name: Harden runner (Legion, BLOCK)
+        uses: Wraith-security/legion_runner@v1.0.61   # dogfood our own action
         with:
-          egress-policy: audit
+          egress-policy: block
+          allowed-presets: cargo, rust
+          policy-file: .legion/egress-allowed.txt
           ebpf: 'off'
           dns-capture: 'true'
           job-summary: 'false'   # self-test, not a report: keep it out of the summary
