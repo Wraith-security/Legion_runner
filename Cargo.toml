@@ -29,9 +29,13 @@ serde              = { version = "1",    features = ["derive"] }
 serde_json         = "1"
 # hashing (file-integrity fingerprints)
 sha2               = "0.11"
-# GitHub App auth — RS256 JWT signing (ring-backed; avoids the `rsa` crate's
-# unpatched RUSTSEC-2023-0071 Marvin advisory that would trip `cargo audit`).
-jsonwebtoken       = { version = "10", default-features = false, features = ["use_pem"] }
+# GitHub App auth — RS256 JWT signing. jsonwebtoken 10 made the crypto backend
+# an explicit feature (its default is aws_lc_rs); with default-features = false
+# and no backend, encode() panics at runtime ("select a CryptoProvider"). Pick
+# aws_lc_rs, not the rust_crypto backend: rust_crypto pulls the `rsa` crate whose
+# unpatched RUSTSEC-2023-0071 Marvin advisory would trip `cargo audit`. aws_lc_rs
+# does its RSA in aws-lc, so no `rsa` crate enters the tree.
+jsonwebtoken       = { version = "10", default-features = false, features = ["use_pem", "aws_lc_rs"] }
 # datetime
 chrono             = { version = "0.4",  features = ["serde"] }
 # error handling
