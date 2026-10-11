@@ -199,7 +199,7 @@ jobs:
       # compiles it and pulls its whole dependency tree from crates.io, where one
       # flaky download fails the job, as it did with a transient TLS EOF).
       - name: Install cargo-audit (prebuilt)
-        uses: taiki-e/install-action@dfae9bf3d6f6c6f20ef4ebb3486c01a51341ff12 # v2.87.18
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: cargo-audit
       - name: Audit dependencies
