@@ -35,7 +35,7 @@ sha2               = "0.11"
 # aws_lc_rs, not the rust_crypto backend: rust_crypto pulls the `rsa` crate whose
 # unpatched RUSTSEC-2023-0071 Marvin advisory would trip `cargo audit`. aws_lc_rs
 # does its RSA in aws-lc, so no `rsa` crate enters the tree.
-jsonwebtoken       = { version = "10", default-features = false, features = ["use_pem", "aws_lc_rs"] }
+jsonwebtoken       = { version = "11", default-features = false, features = ["use_pem", "aws_lc_rs"] }
 # datetime
 chrono             = { version = "0.4",  features = ["serde"] }
 # error handling
