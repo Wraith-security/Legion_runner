@@ -31,6 +31,8 @@ Unreleased section.
   reference now reads `@v1.2.0`.
 - **No dashes.** Em and en dashes are gone from the docs, the changelog, code
   comments and the CLI's help and output.
+- **The eBPF smoke test connects to a literal IP.** Under v1.2.0's block mode
+  a lookup of `example.com` is refused, so curl never reached `connect()`.
 - **The precheck checks every tracked file for dashes**, not only added
   lines, so none come back.
 

@@ -77,8 +77,12 @@ jobs:
         run: |
           sudo timeout 5 ./target/release/legionr-bpf > /tmp/legionc.log 2>/tmp/legionc.err &
           sleep 1
-          # Generate a connection to capture.
-          curl -sS -o /dev/null --max-time 5 https://example.com || true
+          # Generate a connection to capture. A literal TEST-NET address, not a
+          # name: block mode answers REFUSED for names off the allowlist, so a
+          # lookup would stop curl before connect(). The firewall dropping the
+          # packet does not stop the syscall the agent traces, and a hard-coded
+          # IP is the case the agent exists to catch.
+          curl -sS -o /dev/null --max-time 2 http://192.0.2.1/ || true
           sleep 1
           echo "=== captured ==="; sudo cat /tmp/legionc.log | head -20 || true
           echo "=== stderr ==="; sudo cat /tmp/legionc.err | head -20 || true
