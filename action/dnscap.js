@@ -70,11 +70,35 @@ const client = dgram.createSocket("udp4");
 const inflight = new Map(); // our id -> { sock, addr, port, orig }
 let nextId = Math.floor(Math.random() * 0x10000);
 const allowed = new Set(); // IPs already inserted into the firewall
+// Names an allowlisted name points to through a CNAME, learned from upstream
+// answers, mapped to the ports of the entry that allowed them. A CDN host such
+// as static.rust-lang.org answers with a CNAME to the CDN's own name, and some
+// clients then look up that target by itself; refusing it would break a host
+// the policy allows.
+const viaCname = new Map(); // name -> ports (null = every port)
 
 // A name is allowed if it equals, or is a subdomain of, an allowlist entry.
 function domainAllowed(name, allow = ALLOW) {
   name = (name || "").toLowerCase().replace(/\.$/, "");
   return allow.some((d) => name === d || name.endsWith("." + d));
+}
+
+// Pure: is `name` allowed, either by the allowlist or as the CNAME target of an
+// allowed name seen earlier? Returns { ok, ports }.
+function nameAllowed(name, entries = ALLOW_ENTRIES, learned = viaCname) {
+  name = (name || "").toLowerCase().replace(/\.$/, "");
+  if (domainAllowed(name, entries.map((e) => e.host))) return { ok: true, ports: portsFor(name, entries) };
+  if (learned.has(name)) return { ok: true, ports: learned.get(name) };
+  return { ok: false, ports: null };
+}
+
+// Record the CNAME targets of an answer to an allowed name as allowed too, with
+// that name's ports. Only names upstream gave for an allowed query are learned.
+function learnCnames(cnames, ports, learned = viaCname) {
+  for (const target of cnames || []) {
+    const t = (target || "").toLowerCase().replace(/\.$/, "");
+    if (t && !learned.has(t)) learned.set(t, ports);
+  }
 }
 
 // Insert an ACCEPT for `ip` ahead of the terminal DROP of the host chain and,
@@ -171,12 +195,15 @@ function extract(buf) {
     pos = skipName(buf, pos) + 4; // + qtype(2) + qclass(2)
   }
   const ips = [];
+  const cnames = [];
   for (let i = 0; i < an && pos + 10 <= buf.length; i++) {
     pos = skipName(buf, pos);
     const type = buf.readUInt16BE(pos);
     const rdlen = buf.readUInt16BE(pos + 8);
     const rdata = pos + 10;
-    if (type === 1 && rdlen === 4) {
+    if (type === 5) {
+      cnames.push(readName(buf, rdata));
+    } else if (type === 1 && rdlen === 4) {
       ips.push(`${buf[rdata]}.${buf[rdata + 1]}.${buf[rdata + 2]}.${buf[rdata + 3]}`);
     } else if (type === 28 && rdlen === 16) {
       const parts = [];
@@ -185,7 +212,7 @@ function extract(buf) {
     }
     pos = rdata + rdlen;
   }
-  return { qname, ips };
+  return { qname, ips, cnames };
 }
 
 // Only bind/relay when run as a script; importing (for tests) is side-effect free.
@@ -194,7 +221,7 @@ if (require.main === module) {
     if (msg.length < 12) return;
     if (ENFORCE) {
       const name = queryName(msg);
-      if (!domainAllowed(name)) {
+      if (!nameAllowed(name).ok) {
         const answer = refusedResponse(msg);
         if (answer) sock.send(answer, rinfo.port, rinfo.address);
         if (REFUSED_LOG && name) {
@@ -221,13 +248,16 @@ if (require.main === module) {
     if (rinfo.address !== upstream || rinfo.port !== 53) return;
     try {
       const r = extract(msg);
+      const verdict = r && r.qname ? nameAllowed(r.qname) : { ok: false };
+      // Learn the CNAME chain first, so a client that next asks for the
+      // target by itself is answered, not refused.
+      if (ENFORCE && verdict.ok) learnCnames(r.cnames, verdict.ports);
       if (r && r.qname && r.ips.length) {
         fs.appendFileSync(logFile, r.ips.map((ip) => `${ip}\t${r.qname}`).join("\n") + "\n");
         // Enforce-by-domain: open the firewall for this domain's IPs *before*
         // the app receives the answer, so the connection that follows is allowed.
-        if (ENFORCE && domainAllowed(r.qname)) {
-          const ports = portsFor(r.qname);
-          for (const ip of r.ips) allowIp(ip, ports);
+        if (ENFORCE && verdict.ok) {
+          for (const ip of r.ips) allowIp(ip, verdict.ports);
         }
       }
     } catch {
@@ -254,4 +284,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { extract, readName, domainAllowed, queryName, refusedResponse, parseAllow, portsFor, parseBinds }; // for tests
+module.exports = { extract, readName, domainAllowed, nameAllowed, learnCnames, queryName, refusedResponse, parseAllow, portsFor, parseBinds }; // for tests

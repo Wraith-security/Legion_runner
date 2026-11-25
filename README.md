@@ -250,14 +250,16 @@ the firewall log) rather than dropped silently.
 - **Host processes:** default-deny at the firewall; only allowlisted IPs, loopback
   and established connections pass.
 - **Containers** (`docker run`, service containers): their traffic is forwarded,
-  not sent from the host, and is filtered by its own default-deny chain. Their
-  DNS always goes to the runner's real resolver, whatever server they ask.
+  not sent from the host, and is filtered by its own default-deny chain. With
+  `dns-capture`, their DNS goes to Legion's forwarder on the Docker bridge,
+  whatever server they ask, and gets the same allowlist as the host.
 - **DNS:** with `dns-capture` (the default), every non-root lookup on the host
   passes Legion's forwarder, including `dig @8.8.8.8` and systemd-resolved's own
   queries. Names off the allowlist are answered REFUSED and never leave the
-  runner, so DNS cannot carry data out. Without `dns-capture`, and for
-  containers, DNS can only reach the configured resolver, but names are not
-  filtered.
+  runner, so DNS cannot carry data out. A name an allowed host points to by
+  CNAME (a CDN such as `static.rust-lang.org` to `fastly.net`) is answered too,
+  with that host's ports. Without `dns-capture`, DNS can only reach the
+  configured resolver, but names are not filtered.
 - **sudo:** a step with sudo can undo any of this. Set `disable-sudo: true` when
   later steps do not need sudo; the action verifies the revocation, and a root
   warden removes the firewall when the job ends so the runner still finalizes.
