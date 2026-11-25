@@ -278,3 +278,16 @@ test("default route interface is read from /proc/net/route", () => {
   assert.equal(defaultIfaceFromRoute("Iface\tDestination\n"), "");
   assert.equal(defaultIfaceFromRoute(""), "");
 });
+
+test("agents.json is tracked by git (a global *.json ignore once hid it)", () => {
+  const { execFileSync } = require("node:child_process");
+  const path = require("node:path");
+  const root = path.join(__dirname, "..");
+  let tracked = "";
+  try {
+    tracked = execFileSync("git", ["ls-files", "action/agents.json"], { cwd: root }).toString().trim();
+  } catch {
+    return; // not a git checkout (e.g. a packaged action): nothing to check
+  }
+  assert.equal(tracked, "action/agents.json");
+});
