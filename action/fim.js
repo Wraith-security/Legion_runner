@@ -30,21 +30,11 @@ function parseSha256(text) {
   return m ? m[1].toLowerCase() : null;
 }
 
-// Locate the Rust binary: explicit env, then PATH, then alongside the action.
+// Locate a local agent: LEGIONR_FIM, then PATH, then next to the action, each
+// only if root-owned in a root-owned directory. FIM runs as root when the
+// action has privilege, so a job-controlled path here would be a path to root.
 function binPath() {
-  if (process.env.LEGIONR_FIM && fs.existsSync(process.env.LEGIONR_FIM)) {
-    return process.env.LEGIONR_FIM;
-  }
-  try {
-    return (
-      execFileSync("sh", ["-c", "command -v legionr-fim"], { stdio: ["ignore", "pipe", "ignore"] })
-        .toString()
-        .trim() || null
-    );
-  } catch {
-    const local = path.join(__dirname, "..", "bin", "legionr-fim");
-    return fs.existsSync(local) ? local : null;
-  }
+  return agents.trustedLocal("legionr-fim", "LEGIONR_FIM", __dirname);
 }
 
 // Resolve a usable binary: a local one, else best-effort download of the latest

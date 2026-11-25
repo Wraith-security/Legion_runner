@@ -255,6 +255,7 @@ async fn provision(
     }
     cfg.container = ContainerBackend::parse(container)
         .with_context(|| format!("unknown container backend '{container}'"))?;
+    cfg.container.ensure_supported()?;
     if let Some(link) = link {
         cfg.legion_link = link;
     }
@@ -554,18 +555,16 @@ async fn doctor(config: Option<PathBuf>) -> Result<()> {
     let run_sh = cfg.runner_dir.join("run.sh");
     check(
         &format!("official runner present ({})", run_sh.display()),
-        run_sh.exists() || cfg.container != ContainerBackend::None,
-        "run scripts/install.sh to fetch the runner, or use --container",
+        run_sh.exists(),
+        "run scripts/install.sh to fetch the runner",
         &mut ok,
     );
-    if let Some(bin) = cfg.container.binary() {
-        check(
-            &format!("container backend '{bin}' on PATH"),
-            which(bin).is_some(),
-            "install the container runtime or switch backend",
-            &mut ok,
-        );
-    }
+    check(
+        "direct mode (container mode is not supported)",
+        cfg.container == ContainerBackend::None,
+        legionr_core::container::UNSUPPORTED,
+        &mut ok,
+    );
 
     // Live GitHub App preflight: only when App auth is configured. This is the
     // error-prone part of setup ("did I install it? on the right org? can it
@@ -783,12 +782,4 @@ fn isolation_layout_checks(
         ),
     ));
     out
-}
-
-/// Tiny `which`: scan `$PATH` for an executable name.
-fn which(bin: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|dir| dir.join(bin))
-        .find(|p| p.is_file())
 }

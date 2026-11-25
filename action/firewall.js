@@ -40,11 +40,28 @@ const logRule = (chain) => [
   "-j", "LOG", "--log-prefix", "LEGION-DENY ", "--log-level", "4",
 ];
 
+/// Pure: ACCEPT rules for one allowlisted IP in `chain`. `ports` null means
+/// every port (an entry with no port); otherwise only those ports, TCP and UDP
+/// (an entry like `host:443`). multiport takes at most 15 ports per rule.
+function ipAcceptRules(chain, ip, ports) {
+  if (!ports || !ports.length) return [["-A", chain, "-d", ip, "-j", "ACCEPT"]];
+  const out = [];
+  const sorted = [...new Set(ports.map(String))].sort((a, b) => a - b);
+  for (let i = 0; i < sorted.length; i += 15) {
+    const list = sorted.slice(i, i + 15).join(",");
+    for (const proto of ["tcp", "udp"]) {
+      out.push(["-A", chain, "-d", ip, "-p", proto, "-m", "multiport", "--dports", list, "-j", "ACCEPT"]);
+    }
+  }
+  return out;
+}
+
 /// Pure: rules for LEGION_EGRESS (host processes) for one address family.
 /// `dnsUids`: users allowed to send DNS off the box besides root (normally the
 /// systemd-resolve user when there is no forwarder, else none).
 function egressBlockRules(ips, opts = {}) {
   const dnsUids = opts.dnsUids || [];
+  const portsFor = (ip) => (opts.portsByIp ? opts.portsByIp[ip] || null : null);
   const dns = [];
   for (const uid of ["0", ...dnsUids.map(String)]) {
     for (const proto of ["udp", "tcp"]) {
@@ -62,7 +79,7 @@ function egressBlockRules(ips, opts = {}) {
     ["-A", EGRESS_CHAIN, "-d", loopback, "-j", "ACCEPT"],
     ["-A", EGRESS_CHAIN, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
     ...dns,
-    ...ips.map((ip) => ["-A", EGRESS_CHAIN, "-d", ip, "-j", "ACCEPT"]),
+    ...ips.flatMap((ip) => ipAcceptRules(EGRESS_CHAIN, ip, portsFor(ip))),
     logRule(EGRESS_CHAIN),
     ["-A", EGRESS_CHAIN, "-j", "DROP"],
   ];
@@ -70,7 +87,7 @@ function egressBlockRules(ips, opts = {}) {
 
 /// Pure: rules for LEGION_FWD (containers) for one address family.
 /// `resolvers`: the host's upstream DNS servers in this family.
-function forwardBlockRules(ips, resolvers = []) {
+function forwardBlockRules(ips, resolvers = [], portsByIp = null) {
   const dns = [];
   for (const r of resolvers) {
     for (const proto of ["udp", "tcp"]) {
@@ -80,7 +97,7 @@ function forwardBlockRules(ips, resolvers = []) {
   return [
     ["-A", FWD_CHAIN, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
     ...dns,
-    ...ips.map((ip) => ["-A", FWD_CHAIN, "-d", ip, "-j", "ACCEPT"]),
+    ...ips.flatMap((ip) => ipAcceptRules(FWD_CHAIN, ip, portsByIp ? portsByIp[ip] || null : null)),
     logRule(FWD_CHAIN),
     ["-A", FWD_CHAIN, "-j", "DROP"],
   ];
@@ -107,6 +124,23 @@ function containerDnsRules(resolver) {
     }
   }
   return out;
+}
+
+/// Point container DNS at `target` (the forwarder on the Docker bridge once DNS
+/// capture is up, so containers get the same allowlist and dynamic allows as
+/// the host; the upstream resolver otherwise). Replaces any earlier target.
+function setContainerDns(exec, target) {
+  try {
+    exec(["iptables", "-t", "nat", "-N", CDNS_CHAIN]);
+  } catch {
+    exec(["iptables", "-t", "nat", "-F", CDNS_CHAIN]);
+  }
+  for (const rule of containerDnsRules(target)) exec(["iptables", ...rule]);
+  try {
+    exec(["iptables", "-t", "nat", "-C", "PREROUTING", "-j", CDNS_CHAIN]);
+  } catch {
+    exec(["iptables", "-t", "nat", "-I", "PREROUTING", "1", "-j", CDNS_CHAIN]);
+  }
 }
 
 /// Pure: the full teardown, every jump removed BEFORE its chain is flushed
@@ -197,24 +231,14 @@ function applyAll(exec, plan) {
   for (const [bin, ips, resolvers] of fams) {
     ensureChain(exec, bin, EGRESS_CHAIN, "OUTPUT");
     const family = bin === "ip6tables" ? 6 : 4;
-    applyRules(exec, bin, egressBlockRules(ips, { dnsUids: plan.dnsUids || [], family }));
+    applyRules(exec, bin, egressBlockRules(ips, { dnsUids: plan.dnsUids || [], portsByIp: plan.portsByIp, family }));
     if (plan.extIface) {
       ensureChain(exec, bin, FWD_CHAIN, "FORWARD", ["-o", plan.extIface]);
-      applyRules(exec, bin, forwardBlockRules(ips, resolvers));
+      applyRules(exec, bin, forwardBlockRules(ips, resolvers, plan.portsByIp));
     }
   }
   if (plan.extIface && (plan.resolvers4 || []).length) {
-    try {
-      exec(["iptables", "-t", "nat", "-N", CDNS_CHAIN]);
-    } catch {
-      exec(["iptables", "-t", "nat", "-F", CDNS_CHAIN]);
-    }
-    for (const rule of containerDnsRules(plan.resolvers4[0])) exec(["iptables", ...rule]);
-    try {
-      exec(["iptables", "-t", "nat", "-C", "PREROUTING", "-j", CDNS_CHAIN]);
-    } catch {
-      exec(["iptables", "-t", "nat", "-I", "PREROUTING", "1", "-j", CDNS_CHAIN]);
-    }
+    setContainerDns(exec, plan.resolvers4[0]);
   }
 }
 
@@ -231,6 +255,39 @@ function applyDnsRedirect(exec, port = 53) {
   } catch {
     exec(["iptables", "-t", "nat", "-A", "OUTPUT", "-j", DNS_CHAIN]);
   }
+}
+
+/// Pure: the port policy per allowlisted host. `entries` are { host, port }
+/// (port null = every port). A host listed once without a port gets every
+/// port, whatever else lists it. Returns { host: null | [ports] }.
+function portPolicy(entries) {
+  const out = {};
+  for (const { host, port } of entries) {
+    if (!host) continue;
+    const h = host.toLowerCase();
+    if (port === null || port === undefined || port === "") out[h] = null;
+    else if (out[h] !== null) out[h] = [...new Set([...(out[h] || []), String(port)])];
+  }
+  return out;
+}
+
+/// Pure: ports per IP from the hosts each IP resolved for. Any host with every
+/// port open wins; otherwise the union. IPs absent from the map get every port.
+function portsByIp(hostsByIp, policy) {
+  const out = {};
+  for (const [ip, hosts] of Object.entries(hostsByIp)) {
+    let ports = [];
+    for (const h of hosts) {
+      const p = policy[h.toLowerCase()];
+      if (p === null || p === undefined) {
+        ports = null;
+        break;
+      }
+      ports.push(...p);
+    }
+    out[ip] = ports === null ? null : [...new Set(ports)];
+  }
+  return out;
 }
 
 /// Pure: decide whether Legion's controls were changed during the job, from
@@ -258,8 +315,12 @@ module.exports = {
   DNS_CHAIN,
   CDNS_CHAIN,
   containerDnsRules,
+  setContainerDns,
   egressBlockRules,
   forwardBlockRules,
+  ipAcceptRules,
+  portPolicy,
+  portsByIp,
   dnsRedirectRules,
   unblockCommands,
   egressUnblockRules,

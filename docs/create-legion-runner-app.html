@@ -35,14 +35,19 @@
   and copy the App ID, then install the App on your org(s).
 </p>
 
-<p>Permissions it will request:</p>
+<p>Permissions it will request (the least that registers runners):</p>
 <table>
-  <tr><th>Scope</th><th>Permission</th><th>Level</th></tr>
-  <tr><td>Repository</td><td>Administration</td><td>Read &amp; write</td></tr>
-  <tr><td>Repository</td><td>Actions</td><td>Read &amp; write</td></tr>
-  <tr><td>Repository</td><td>Metadata</td><td>Read</td></tr>
-  <tr><td>Organization</td><td>Self-hosted runners</td><td>Read &amp; write</td></tr>
+  <tr><th>App owner</th><th>Scope</th><th>Permission</th><th>Level</th></tr>
+  <tr><td>An organization (recommended)</td><td>Organization</td><td>Self-hosted runners</td><td>Read &amp; write</td></tr>
+  <tr><td>My personal account</td><td>Repository</td><td>Administration</td><td>Read &amp; write</td></tr>
+  <tr><td>Either</td><td>Repository</td><td>Metadata</td><td>Read</td></tr>
 </table>
+<p>
+  An organization App registers organization runners and never needs
+  repository Administration. A personal-account App can only register
+  repository runners, and GitHub requires repository Administration for that.
+  Neither needs Actions write.
+</p>
 
 <fieldset>
   <legend>Who owns the App?</legend>
@@ -83,12 +88,12 @@ document.getElementById('create').addEventListener('click', function () {
     public: isPublic,
     hook_attributes: { active: false },
     default_events: [],
-    default_permissions: {
-      administration: 'write',
-      actions: 'write',
-      metadata: 'read',
-      organization_self_hosted_runners: 'write'
-    }
+    // Least privilege: an org App registers org runners and needs only the
+    // org's Self-hosted runners permission; a personal App can only register
+    // repository runners, which GitHub gates on repository Administration.
+    default_permissions: isOrg
+      ? { metadata: 'read', organization_self_hosted_runners: 'write' }
+      : { metadata: 'read', administration: 'write' }
   };
 
   var action = isOrg

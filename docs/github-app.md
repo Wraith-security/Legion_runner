@@ -21,12 +21,17 @@ host deploy (EC2 / systemd).
 
 ## Permissions the App needs
 
-| Scope | Permission | Level | Why |
-|-------|-----------|-------|-----|
-| Repository | **Administration** | Read & write | Create repo runner registration / JIT config (`generate-jitconfig`, `registration-token`). |
-| Repository | **Actions** | Read & write | Dispatch workflows (the e2e receiver) and read run status. |
-| Repository | **Metadata** | Read | Mandatory baseline. |
-| Organization | **Self-hosted runners** | Read & write | Create org-scoped runners (only if you register at org scope). |
+Ask for the least that registers runners. It depends on who owns the App:
+
+| App owner | Scope | Permission | Level | Why |
+|-----------|-------|-----------|-------|-----|
+| Organization (recommended) | Organization | **Self-hosted runners** | Read & write | Register org runners (`generate-jitconfig` at org scope). No repository permission at all. |
+| Personal account | Repository | **Administration** | Read & write | Register repository runners. GitHub gates repository runner registration on Administration, which also allows changing repository settings, so prefer an org App. |
+| Either | Repository | **Metadata** | Read | Mandatory baseline. |
+
+The App does not need **Actions** write. Earlier versions asked for it only so
+this repository's own end-to-end harness could dispatch a test workflow; that
+harness uses its own token. An App that already has it can drop it.
 
 No webhook, no account permissions, no events. The runner **polls** GitHub; the
 App never needs to receive anything.

@@ -101,3 +101,29 @@ jobs:
             echo "captured comms were:"; sudo awk '{print $5}' /tmp/legionc.log | sort -u
             exit 1; }
           echo "PASS: the curl connection is attributed to process 'curl'"
+
+      - name: UDP sends to an address are captured, and de-duplicated
+        run: |
+          sudo timeout 6 ./target/release/legionr-bpf > /tmp/legionu.log 2>/tmp/legionu.err &
+          sleep 1
+          # 50 unconnected UDP sends (sendto) to one TEST-NET address within a
+          # second: the agent must report it, once.
+          python3 -c "
+          import socket
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          for _ in range(50):
+              # The tracepoint fires at syscall entry, before any firewall
+              # verdict; this job runs under block mode, so the send itself
+              # may fail with EPERM. That is fine: the event is what we test.
+              try:
+                  s.sendto(b'x', ('192.0.2.1', 9999))
+              except OSError:
+                  pass
+          "
+          sleep 2
+          echo "=== captured ==="; sudo cat /tmp/legionu.log | head -20 || true
+          echo "=== stderr ==="; sudo cat /tmp/legionu.err | head -20 || true
+          n="$(sudo grep -cE '^LEGIONU 192\.0\.2\.1 9999 [0-9]+ python3$' /tmp/legionu.log || true)"
+          [ "$n" -ge 1 ] || { echo "FAIL: the UDP sendto was not captured as LEGIONU"; exit 1; }
+          [ "$n" -eq 1 ] || { echo "FAIL: $n lines for 50 sends within a second (no de-dup)"; exit 1; }
+          echo "PASS: one LEGIONU line for 50 UDP sends, attributed to python3"

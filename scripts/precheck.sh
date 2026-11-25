@@ -73,6 +73,11 @@ diff -u "$tmp/committed" "$tmp/generated" \
     || die "systemd/legionr@.service drifted from the generator; run: make unit"
 ok "systemd/legionr@.service is current"
 
+step "No build output tracked"
+tracked="$(git ls-files | grep -E '(^|/)target/' | head -5 || true)"
+[ -z "$tracked" ] || { echo "$tracked"; die "build output is tracked (a target/ directory); git rm -r --cached it and ignore it"; }
+ok "no target/ directory in git"
+
 step "House style: no em or en dashes in added lines"
 if git rev-parse -q --verify "$BASE" >/dev/null; then
     # Added lines only, so existing text is cleaned up deliberately, not

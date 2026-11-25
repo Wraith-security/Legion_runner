@@ -235,6 +235,7 @@ impl Runner {
 
     /// Prepare and verify, refusing to continue unless the job is isolated.
     pub async fn prepare_isolated(&self) -> Result<JobIdentity> {
+        self.cfg.container.ensure_supported()?;
         let id = self.job_identity()?;
         self.prepare(id).await?;
         let fails = self.verify_isolation(id).await?;
@@ -403,6 +404,18 @@ mod tests {
         assert!(joined.contains("--cap-drop=ALL"));
         assert!(joined.contains("/opt/legion-runner/_work/runner/_work:/_work"));
         assert!(joined.contains("./run.sh --jitconfig BLOB"));
+    }
+
+    #[tokio::test]
+    async fn container_mode_is_refused_before_anything_runs() {
+        let mut c = cfg();
+        c.container = ContainerBackend::Podman;
+        let err = Runner::new(c)
+            .prepare_isolated()
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not supported"), "{err}");
     }
 
     #[test]

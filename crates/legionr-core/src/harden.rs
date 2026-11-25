@@ -12,17 +12,31 @@ use crate::config::RunnerConfig;
 
 /// GitHub endpoints a runner must reach: API, web (registration), Actions
 /// pipelines/results, and artifact/cache storage. Always allowed.
+/// GitHub's documented runner hosts (docs: "Communication between self-hosted
+/// runners and GitHub"). The host firewall allows IP sets, which cannot express
+/// GitHub's two wildcards: `*.actions.githubusercontent.com` is covered by the
+/// fixed subdomains below (broker, pipelines, OIDC token, results), and
+/// `*.blob.core.windows.net` (logs, artifacts, caches) is left to the operator
+/// (`provision --allow`), because allowing it means allowing any Azure Storage
+/// account. See docs/egress.md.
 pub const GITHUB_EGRESS: &[&str] = &[
     "github.com",
     "api.github.com",
     "codeload.github.com",
-    "objects.githubusercontent.com",
-    "ghcr.io",
+    "broker.actions.githubusercontent.com",
+    "pipelines.actions.githubusercontent.com",
+    "token.actions.githubusercontent.com",
+    "vstoken.actions.githubusercontent.com",
     "pkg.actions.githubusercontent.com",
     "results-receiver.actions.githubusercontent.com",
     "actions-results-receiver-production.githubapp.com",
-    "vstoken.actions.githubusercontent.com",
-    "pipelines.actions.githubusercontent.com",
+    "objects.githubusercontent.com",
+    "objects-origin.githubusercontent.com",
+    "github-releases.githubusercontent.com",
+    "github-registry-files.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+    "pkg-containers.githubusercontent.com",
+    "ghcr.io",
 ];
 
 /// Non-loopback nameservers from resolv.conf-style text, per family. The host
@@ -476,6 +490,36 @@ mod tests {
         let tpl = p.nftables_ruleset();
         assert!(tpl.contains("ip daddr @dns4 udp dport 53 accept"));
         assert!(tpl.contains("udp dport 41641 accept"));
+    }
+
+    #[test]
+    fn egress_covers_githubs_documented_runner_hosts() {
+        // Exact hosts from GitHub's runner communication list. The two
+        // wildcards (*.actions.githubusercontent.com, *.blob.core.windows.net)
+        // cannot be IP sets; see GITHUB_EGRESS.
+        for h in [
+            "github.com",
+            "api.github.com",
+            "codeload.github.com",
+            "results-receiver.actions.githubusercontent.com",
+            "objects.githubusercontent.com",
+            "objects-origin.githubusercontent.com",
+            "github-releases.githubusercontent.com",
+            "github-registry-files.githubusercontent.com",
+            "release-assets.githubusercontent.com",
+            "pkg-containers.githubusercontent.com",
+            "ghcr.io",
+            "broker.actions.githubusercontent.com",
+            "token.actions.githubusercontent.com",
+        ] {
+            assert!(GITHUB_EGRESS.contains(&h), "missing documented host {h}");
+        }
+        assert!(
+            !GITHUB_EGRESS
+                .iter()
+                .any(|h| h.ends_with("blob.core.windows.net")),
+            "blob storage would allow any Azure Storage account"
+        );
     }
 
     #[test]

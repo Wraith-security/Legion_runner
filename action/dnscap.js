@@ -27,15 +27,48 @@ const port = parseInt(process.argv[4], 10) || 53;
 // firewall (LEGION_EGRESS chain) before the reply is relayed — block-by-domain.
 const ENFORCE = process.argv[5] === "1";
 const REFUSED_LOG = process.argv[7] || "";
-const ALLOW = (process.argv[6] || "")
-  .toLowerCase()
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
+// Entries are "host" (every port) or "host:443+8443" (only those ports).
+const ALLOW_ENTRIES = parseAllow(process.argv[6] || "");
+const ALLOW = ALLOW_ENTRIES.map((e) => e.host);
 
-const server = dgram.createSocket("udp4");
+// Pure: parse the allow argument into { host, ports } (ports null = every port).
+function parseAllow(csv) {
+  return csv
+    .toLowerCase()
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => {
+      const [host, ports] = s.split(":");
+      const list = (ports || "").split("+").filter((p) => /^\d+$/.test(p));
+      return { host, ports: list.length ? list : null };
+    });
+}
+
+// Pure: the ports to open for an answer to `name` (null = every port), from the
+// most specific matching entry; any matching entry without ports wins.
+function portsFor(name, entries = ALLOW_ENTRIES) {
+  name = (name || "").toLowerCase().replace(/\.$/, "");
+  let ports = [];
+  for (const e of entries) {
+    if (name === e.host || name.endsWith("." + e.host)) {
+      if (e.ports === null) return null;
+      ports.push(...e.ports);
+    }
+  }
+  return ports.length ? [...new Set(ports)] : null;
+}
+
+// Extra listen addresses (argv[8], comma-separated IPv4), e.g. the Docker
+// bridge gateway, so container DNS can be sent here too (see firewall.js).
+const EXTRA_BINDS = parseBinds(process.argv[8] || "");
 const client = dgram.createSocket("udp4");
-const inflight = new Map(); // query id -> { addr, port }
+// Forwarder-assigned id -> where the answer goes. The query is sent upstream
+// under our own id and the client's id is put back on the reply, so two
+// clients (the host and a container) using the same id never get each
+// other's answers.
+const inflight = new Map(); // our id -> { sock, addr, port, orig }
+let nextId = Math.floor(Math.random() * 0x10000);
 const allowed = new Set(); // IPs already inserted into the firewall
 
 // A name is allowed if it equals, or is a subdomain of, an allowlist entry.
@@ -47,19 +80,34 @@ function domainAllowed(name, allow = ALLOW) {
 // Insert an ACCEPT for `ip` ahead of the terminal DROP of the host chain and,
 // when present, the container chain (dedup in-mem). `-w` waits for the xtables
 // lock instead of failing when another process (Docker) holds it.
-function allowIp(ip) {
-  if (!ip || allowed.has(ip)) return;
+function allowIp(ip, ports = null) {
+  const key = `${ip}|${ports ? ports.join("+") : "*"}`;
+  if (!ip || allowed.has(key)) return;
   const bin = ip.includes(":") ? "ip6tables" : "iptables";
+  const specs = ports
+    ? ["tcp", "udp"].map((proto) => ["-d", ip, "-p", proto, "-m", "multiport", "--dports", ports.slice(0, 15).join(","), "-j", "ACCEPT"])
+    : [["-d", ip, "-j", "ACCEPT"]];
   let ok = false;
   for (const chain of ["LEGION_EGRESS", "LEGION_FWD"]) {
-    try {
-      execFileSync(bin, ["-w", "5", "-I", chain, "-d", ip, "-j", "ACCEPT"], { stdio: "ignore" });
-      if (chain === "LEGION_EGRESS") ok = true;
-    } catch {
-      /* LEGION_FWD is absent when there is no external interface */
+    for (const spec of specs) {
+      try {
+        execFileSync(bin, ["-w", "5", "-I", chain, ...spec], { stdio: "ignore" });
+        if (chain === "LEGION_EGRESS") ok = true;
+      } catch {
+        /* LEGION_FWD is absent when there is no external interface */
+      }
     }
   }
-  if (ok) allowed.add(ip);
+  if (ok) allowed.add(key);
+}
+
+// Pure: valid IPv4 listen addresses from a comma-separated list.
+function parseBinds(csv) {
+  return csv
+    .split(",")
+    .map((s) => s.trim())
+    .filter((ip) => /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.test(ip) && ip.split(".").every((o) => +o <= 255))
+    .filter((ip) => ip !== "127.0.0.1");
 }
 
 // The question name of a DNS query, or "" if it cannot be read.
@@ -142,12 +190,13 @@ function extract(buf) {
 
 // Only bind/relay when run as a script; importing (for tests) is side-effect free.
 if (require.main === module) {
-  server.on("message", (msg, rinfo) => {
+  const onQuery = (sock, msg, rinfo) => {
+    if (msg.length < 12) return;
     if (ENFORCE) {
       const name = queryName(msg);
       if (!domainAllowed(name)) {
         const answer = refusedResponse(msg);
-        if (answer) server.send(answer, rinfo.port, rinfo.address);
+        if (answer) sock.send(answer, rinfo.port, rinfo.address);
         if (REFUSED_LOG && name) {
           try {
             fs.appendFileSync(REFUSED_LOG, name.toLowerCase() + "\n");
@@ -158,9 +207,12 @@ if (require.main === module) {
         return;
       }
     }
-    if (msg.length >= 2) inflight.set(msg.readUInt16BE(0), { addr: rinfo.address, port: rinfo.port });
-    client.send(msg, 53, upstream);
-  });
+    nextId = (nextId + 1) & 0xffff;
+    inflight.set(nextId, { sock, addr: rinfo.address, port: rinfo.port, orig: msg.readUInt16BE(0) });
+    const out = Buffer.from(msg);
+    out.writeUInt16BE(nextId, 0);
+    client.send(out, 53, upstream);
+  };
   client.on("message", (msg, rinfo) => {
     // Only trust replies from the real upstream. The client socket is otherwise
     // reachable by any local process, so an untrusted job could spray forged DNS
@@ -174,23 +226,32 @@ if (require.main === module) {
         // Enforce-by-domain: open the firewall for this domain's IPs *before*
         // the app receives the answer, so the connection that follows is allowed.
         if (ENFORCE && domainAllowed(r.qname)) {
-          for (const ip of r.ips) allowIp(ip);
+          const ports = portsFor(r.qname);
+          for (const ip of r.ips) allowIp(ip, ports);
         }
       }
     } catch {
       /* logging is best-effort; never disrupt resolution */
     }
     if (msg.length >= 2) {
-      const dst = inflight.get(msg.readUInt16BE(0));
+      const id = msg.readUInt16BE(0);
+      const dst = inflight.get(id);
       if (dst) {
-        server.send(msg, dst.port, dst.addr);
-        inflight.delete(msg.readUInt16BE(0));
+        inflight.delete(id);
+        msg.writeUInt16BE(dst.orig, 0);
+        dst.sock.send(msg, dst.port, dst.addr);
       }
     }
   });
-  server.on("error", () => process.exit(1));
   client.on("error", () => {});
-  server.bind(port, "127.0.0.1");
+  for (const addr of ["127.0.0.1", ...EXTRA_BINDS]) {
+    const sock = dgram.createSocket("udp4");
+    sock.on("message", (msg, rinfo) => onQuery(sock, msg, rinfo));
+    // Loopback is the forwarder's reason to exist; an extra address failing to
+    // bind (the bridge went away) only loses that path.
+    sock.on("error", () => (addr === "127.0.0.1" ? process.exit(1) : sock.close()));
+    sock.bind(port, addr);
+  }
 }
 
-module.exports = { extract, readName, domainAllowed, queryName, refusedResponse }; // for tests
+module.exports = { extract, readName, domainAllowed, queryName, refusedResponse, parseAllow, portsFor, parseBinds }; // for tests

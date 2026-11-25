@@ -338,7 +338,7 @@ removes the persistence surface entirely:
   the job if it is not. `legionr check-isolation` runs the same check on demand.
 - **Defense in depth.** A hardened systemd unit (`systemd-analyze security`
   rates it 1.7, OK), kernel sysctl hardening, a default-deny egress allowlist,
-  and an optional rootless container sandbox per job.
+  and a separate unprivileged user for every job.
 
 ### No PATs — the Legion Runner GitHub App
 
@@ -366,7 +366,7 @@ hour, so nothing long-lived ever sits on the host or in CI.
             |        | hardened systemd unit            | Legion link      |
             |        v (non-root, seccomp, no-new-privs) v (lifecycle)     |
             |   official actions/runner          Legion desktop dashboard  |
-            |   (optionally inside a rootless Podman/Docker sandbox)       |
+            |   (a fresh copy, run as legionr-job, wiped after the job)    |
             +--------------------------------------------------------------+
 ```
 
@@ -439,10 +439,14 @@ jobs:
   `TasksMax`/`MemoryMax`/`CPUQuota`.
 - **Kernel:** `ptrace_scope=2`, `kptr_restrict=2`, `unprivileged_bpf_disabled`,
   `kexec_load_disabled`, network anti-spoofing.
-- **Network:** nftables **default-deny** egress; only DNS + the GitHub endpoint
-  allowlist (plus operator `--allow` hosts) may leave the box.
-- **Per-job sandbox (optional):** rootless Podman/Docker with `--cap-drop=ALL`,
-  `--read-only`, `--security-opt no-new-privileges`, pids/memory caps.
+- **Network:** nftables **default-deny** egress; only DNS to the host's own
+  resolvers and the GitHub endpoint allowlist (plus operator `--allow` hosts)
+  may leave the box. See [docs/egress.md](docs/egress.md) for exactly what that
+  covers and what it cannot (GitHub's wildcard hosts).
+- **No container mode.** Rootless Podman needs user namespaces and the setuid
+  `newuidmap`, which the hardened unit blocks, and Docker's socket is
+  root-equivalent, so `legionr` refuses `--container`. Direct mode already runs
+  each job as its own user from a fresh, wiped runner copy.
 
 Verify the unit's exposure with `systemd-analyze security legionr@default`.
 
@@ -450,7 +454,7 @@ Verify the unit's exposure with `systemd-analyze security legionr@default`.
 
 - Linux with systemd (and `nftables` for the egress firewall).
 - [Rust](https://rustup.rs) 1.78+ to build `legionr`.
-- `curl`, `tar`; optionally `podman` or `docker` for the per-job sandbox.
+- `curl`, `tar`.
 - A credential that can manage runners on the scope. Recommended: a **Legion
   Runner GitHub App** installed on your org ([docs/github-app.md](docs/github-app.md));
   a PAT with `manage-runners` also works.

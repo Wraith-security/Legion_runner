@@ -11,6 +11,56 @@ Unreleased section.
 
 ## [Unreleased]
 
+### Changed (Medium findings)
+- **eBPF capture sees UDP sent to an address.** The agent hooked only
+  `connect()`, so unconnected UDP (DNS, QUIC) was invisible. It now also hooks
+  `sendto` and `sendmsg`, de-duplicates those per (pid, address, port) for a
+  second in the kernel, and reports events lost to a full ring buffer
+  (`LEGIOND`), which the summary shows instead of losing them silently. The
+  claims are corrected: the agent reads the address at syscall entry (a second
+  thread can change it), does not see io_uring or sendmmsg, and the process name
+  is what the process calls itself. New agent lines only appear once
+  `action/agents.json` pins a release built from this change.
+- **`host:port` allowlist entries are enforced.** The firewall opened every port
+  on an allowlisted address. An entry with a port now opens only that port, TCP
+  and UDP, for static and dynamic (DNS) allows alike; an entry without a port
+  still opens every port, as documented.
+- **Local agent binaries must be root-only.** `LEGIONR_BPF`, `LEGIONR_FIM`, a
+  binary on PATH and one next to the action are used only if the file and its
+  directory are owned by root and writable by nobody else. Before, only
+  `LEGIONR_BPF` was checked, and FIM now runs as root.
+- **Container mode is refused.** It could not work under the hardened unit
+  (rootless Podman needs user namespaces and the setuid `newuidmap`, both
+  blocked) and was never run live; Docker's socket is root-equivalent. `legionr
+  provision --container`, `run` and `doctor` now say so plainly. Direct mode
+  already gives every job its own user and a fresh, wiped runner copy.
+- **The GitHub App asks for less.** An organization App now requests only the
+  organization's Self-hosted runners permission; a personal App requests
+  repository Administration (GitHub requires it for repository runners). Neither
+  requests Actions write, which only this repository's test harness used.
+- **GitHub's documented runner hosts.** Both egress lists now include every
+  exact host on GitHub's runner communication list (the self-hosted list adds
+  the broker and OIDC token hosts; the action allows the
+  `actions.githubusercontent.com` suffix). `*.blob.core.windows.net` stays
+  opt-in because it covers every Azure Storage account. New `docs/egress.md`
+  explains what each layer allows.
+- `scripts/precheck.sh` fails when build output (a `target/` directory) is
+  tracked, and `/agent/target` is ignored. The eBPF workspace builds outside
+  the root `/target`, so its output was not covered.
+- **Container DNS goes through the forwarder.** With container filtering,
+  containers resolved straight from the upstream resolver, so they only reached
+  the IPs seeded at startup; `github.com` rotates, and the cargo-deny container
+  could not clone the advisory database. The forwarder now also listens on the
+  Docker bridge and container DNS is sent there, so containers get the same
+  allow-by-domain and the same REFUSED as the host. The forwarder also forwards
+  under its own query id and restores the client's, so two clients using the
+  same id (the host and a container) never get each other's answers.
+- CI (the release gate) dogfoods the action from the commit under test
+  (`uses: ./`) instead of the pinned v1.0.61. That old release still had the
+  resolv.conf bug fixed above, so the gate kept failing on artifact uploads and
+  no release could be cut. Other workflows stay on a released tag.
+
+
 ### Security
 - **Block mode no longer leaves DNS open.** Port 53 was allowed to every
   address, so a step could send data to its own server on port 53 or tunnel it

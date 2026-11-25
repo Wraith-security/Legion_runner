@@ -110,7 +110,7 @@ jobs:
           persist-credentials: false
 
       - name: Harden runner (Legion, BLOCK)
-        uses: Wraith-security/legion_runner@v1.0.61   # dogfood our own action
+        uses: ./   # dogfood the action from this commit: the gate tests what it releases
         with:
           egress-policy: block
           # No package install here (pure Node built-ins); setup-node fetches the
@@ -157,7 +157,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Harden runner (Legion, BLOCK)
-        uses: Wraith-security/legion_runner@v1.0.61   # dogfood our own action
+        uses: ./   # dogfood the action from this commit: the gate tests what it releases
         with:
           egress-policy: block
           allowed-presets: apt
@@ -190,7 +190,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Harden runner (Legion, BLOCK)
-        uses: Wraith-security/legion_runner@v1.0.61   # dogfood our own action
+        uses: ./   # dogfood the action from this commit: the gate tests what it releases
         with:
           egress-policy: block
           allowed-presets: cargo, rust
@@ -231,7 +231,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Harden runner (Legion, BLOCK)
-        uses: Wraith-security/legion_runner@v1.0.61   # dogfood our own action
+        uses: ./   # dogfood the action from this commit: the gate tests what it releases
         with:
           egress-policy: block
           allowed-presets: cargo

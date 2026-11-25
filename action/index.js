@@ -31,17 +31,28 @@ const repos = require("./repos.js");
 
 // GitHub + Actions endpoints a job almost always needs. Kept in sync with
 // legionr-core's harden::GITHUB_EGRESS.
+// GitHub's documented runner communication hosts (docs: "Communication between
+// self-hosted runners and GitHub", data/reusables/actions/
+// runner-essential-communications.md). `actions.githubusercontent.com` matches
+// every subdomain (the forwarder allows by suffix), which covers GitHub's
+// `*.actions.githubusercontent.com` (broker, pipelines, OIDC tokens, run
+// services). `*.blob.core.windows.net` is NOT included: it would allow any Azure
+// Storage account, an attacker's too. Jobs that upload artifacts or caches in
+// block mode add it themselves, knowing that.
 const GITHUB_EGRESS = [
   "github.com",
   "api.github.com",
   "codeload.github.com",
-  "objects.githubusercontent.com",
-  "ghcr.io",
-  "pkg.actions.githubusercontent.com",
+  "actions.githubusercontent.com",
   "results-receiver.actions.githubusercontent.com",
   "actions-results-receiver-production.githubapp.com",
-  "vstoken.actions.githubusercontent.com",
-  "pipelines.actions.githubusercontent.com",
+  "objects.githubusercontent.com",
+  "objects-origin.githubusercontent.com",
+  "github-releases.githubusercontent.com",
+  "github-registry-files.githubusercontent.com",
+  "release-assets.githubusercontent.com",
+  "pkg-containers.githubusercontent.com",
+  "ghcr.io",
 ];
 
 // Curated per-ecosystem egress allowlists so block mode "just works" for common
@@ -306,6 +317,7 @@ function parseEndpoints(raw) {
 
 async function resolveAll(hosts) {
   const ipToHost = {};
+  const hostsByIp = {};
   const v4 = new Set();
   const v6 = new Set();
   const unresolved = [];
@@ -314,6 +326,7 @@ async function resolveAll(hosts) {
       const recs = await dns.lookup(h, { all: true });
       for (const r of recs) {
         ipToHost[r.address] = h;
+        (hostsByIp[r.address] = hostsByIp[r.address] || []).push(h);
         (r.family === 6 ? v6 : v4).add(r.address);
       }
     } catch {
@@ -328,10 +341,28 @@ async function resolveAll(hosts) {
   if (unresolved.length) {
     info(`Allowlist entries with no A/AAAA record at startup (skipped, observed via PTR/dns-capture): ${unresolved.join(", ")}`);
   }
-  return { ipToHost, v4: [...v4], v6: [...v6] };
+  return { ipToHost, hostsByIp, v4: [...v4], v6: [...v6] };
 }
 
 // ── Policy baseline (learn → enforce) ───────────────────────────────────────
+
+/// Read a committed allowlist file into { host, port } entries (a `host:port`
+/// line keeps its port). Missing file: empty list.
+function readPolicyEntries(p) {
+  try {
+    return parseEndpoints(
+      fs
+        .readFileSync(p, "utf8")
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l && !l.startsWith("#"))
+        .map((l) => l.split(/\s+/)[0])
+        .join("\n"),
+    );
+  } catch {
+    return [];
+  }
+}
 
 /// Read a committed allowlist file into a list of hosts (comments/blank/port
 /// stripped). Missing file → empty list.
@@ -444,7 +475,7 @@ async function startEbpf(connectLog, bin) {
       return out; // active stays false — the sampler covers capture
     }
     out.active = true;
-    info("   eBPF capture active (legionr-bpf: tracepoint sys_enter_connect, socket-layer, bypass-proof)");
+    info("   eBPF capture active (legionr-bpf: tracepoints on connect, sendto and sendmsg)");
   } catch (e) {
     warn(`eBPF capture unavailable (${e.message}); using the /proc sampler`);
   }
@@ -518,6 +549,27 @@ function defaultIface() {
   }
 }
 
+/// The IPv4 address of the Docker bridge ("" when there is no docker0).
+/// os.networkInterfaces() (libuv) lists only interfaces that are up AND
+/// running, and docker0 has no carrier until a container starts, so it is
+/// usually missing there; `ip` reports the address whatever the link state.
+function dockerBridgeIp(ifaces = os.networkInterfaces(), ipAddrText = null) {
+  const a = (ifaces.docker0 || []).find((x) => (x.family === "IPv4" || x.family === 4) && !x.internal);
+  if (a) return a.address;
+  let text = ipAddrText;
+  if (text === null) {
+    try {
+      text = execFileSync("ip", ["-4", "-o", "addr", "show", "dev", "docker0"], {
+        stdio: ["ignore", "pipe", "ignore"],
+      }).toString();
+    } catch {
+      text = "";
+    }
+  }
+  const m = (text || "").match(/\binet (\d+\.\d+\.\d+\.\d+)\//);
+  return m ? m[1] : "";
+}
+
 /// uid of a system user, or null.
 function uidOf(user) {
   try {
@@ -528,7 +580,7 @@ function uidOf(user) {
   }
 }
 
-function applyEgressBlock(ipv4, ipv6) {
+function applyEgressBlock(ipv4, ipv6, portsByIp = null) {
   const r = upstreamResolvers();
   const resolvedUid = uidOf("systemd-resolve");
   const plan = {
@@ -540,6 +592,7 @@ function applyEgressBlock(ipv4, ipv6) {
     resolvers4: r.v4,
     resolvers6: r.v6,
     extIface: defaultIface(),
+    portsByIp,
   };
   firewall.applyAll(privExec, plan);
   return plan;
@@ -865,6 +918,9 @@ async function startDnsCapture(opts = {}) {
       opts.enforce ? "1" : "0",
       (opts.domains || []).join(","),
       out.refusedLog,
+      // Also listen on the Docker bridge so container DNS can go through the
+      // forwarder (allowlist and dynamic allows), not straight upstream.
+      opts.enforce ? dockerBridgeIp() : "",
       runTag(),
     ];
     // Bind :53 requires privilege → root directly, else sudo. Detached.
@@ -898,6 +954,16 @@ async function startDnsCapture(opts = {}) {
         firewall.applyDnsRedirect(privExec);
         out.redirect = true;
         info("   all non-root DNS on the host now passes the forwarder (names off the allowlist are refused)");
+        const bridge = dockerBridgeIp();
+        if (bridge) {
+          // Containers too: their DNS is sent to the forwarder on the bridge,
+          // so a rotating allowlisted host (github.com) works in a container.
+          firewall.setContainerDns(privExec, bridge);
+          out.containerDns = bridge;
+          info(`   container DNS goes through the forwarder too (${bridge})`);
+        } else {
+          info("   no Docker bridge found: container DNS goes to the upstream resolver (names not filtered)");
+        }
       } catch (e) {
         warn(`could not redirect DNS to the forwarder (${e.message}); DNS names are not filtered`);
       }
@@ -1052,8 +1118,10 @@ async function main() {
   // Allowlist = GitHub endpoints + inline input + committed file + the baseline
   // the action learned on previous runs (restored from the Actions cache). The
   // cache is what makes audit→block self-contained: no file or workflow needed.
-  const userHosts = parseEndpoints(input("allowed-endpoints", "")).map((e) => e.host);
-  const fileHosts = policyFile ? readPolicyFile(policyFile) : [];
+  const userEntries = parseEndpoints(input("allowed-endpoints", ""));
+  const userHosts = userEntries.map((e) => e.host);
+  const fileEntries = policyFile ? readPolicyEntries(policyFile) : [];
+  const fileHosts = fileEntries.map((e) => e.host);
   const cachedHosts = useLearned ? await cacheRestoreDomains() : [];
   const { hosts: presetHosts, unknown: unknownPresets } = expandPresets(input("allowed-presets", ""));
   if (unknownPresets.length) {
@@ -1077,7 +1145,15 @@ async function main() {
         `(${userHosts.length} inline, ${presetHosts.length} preset, ${fileHosts.length} file, ${cachedHosts.length} learned)`,
     );
   }
-  const { ipToHost, v4, v6 } = await resolveAll(hosts);
+  // Ports per host: an entry with a port opens only that port; GitHub, presets
+  // and learned hosts, and entries without a port, open every port.
+  const portPol = firewall.portPolicy([
+    ...hosts.filter((h) => !userHosts.includes(h) && !fileHosts.includes(h)).map((host) => ({ host, port: null })),
+    ...userEntries,
+    ...fileEntries,
+  ]);
+  const { ipToHost, hostsByIp, v4, v6 } = await resolveAll(hosts);
+  const ipPorts = firewall.portsByIp(hostsByIp, portPol);
 
   const logFile = evidencePath("egress.log");
   writeEvidence(logFile, "");
@@ -1138,7 +1214,7 @@ async function main() {
   let fwPlan = null;
   if (block) {
     try {
-      fwPlan = applyEgressBlock(v4, v6);
+      fwPlan = applyEgressBlock(v4, v6, ipPorts);
       enforced = true;
       info(`   enforced default-deny egress (seeded ${v4.length + v6.length} allowlisted IPs)`);
       info(
@@ -1162,7 +1238,12 @@ async function main() {
   // rotation), so the static seed above is just the head start.
   let dnsCap = { active: false, log: "", backup: "" };
   if (boolInput("dns-capture", true)) {
-    dnsCap = await startDnsCapture({ enforce: block && enforced, domains: hosts });
+    // The forwarder opens IPs as names resolve; it gets each host's ports too.
+    const domains = hosts.map((h) => {
+      const ports = portPol[h.toLowerCase()];
+      return ports ? `${h}:${ports.join("+")}` : h;
+    });
+    dnsCap = await startDnsCapture({ enforce: block && enforced, domains });
   }
 
   // The warden tears everything down when this job's Runner.Worker exits, even
@@ -1290,9 +1371,12 @@ async function post() {
   const counts = new Map();
   const procMap = new Map();
   let usedEbpf = false;
+  let lostEvents = 0;
   if (st.ebpf && st.ebpf.active) {
     try {
-      for (const line of readEvidence(st.ebpf.log).split("\n")) {
+      const connectLog = readEvidence(st.ebpf.log);
+      lostEvents = ebpf.parseDrops(connectLog);
+      for (const line of connectLog.split("\n")) {
         const c = ebpf.parseConnect(line);
         if (!c) continue;
         const ip = normalizeIp(c.ip);
@@ -1368,7 +1452,7 @@ async function post() {
   const rows = [...groups.entries()].sort((a, b) => b[1].conns - a[1].conns);
   const unresolved = rows.filter(([, g]) => !g.host).length;
 
-  const captureLayer = usedEbpf ? "eBPF (sys_enter_connect)" : "/proc sampler";
+  const captureLayer = usedEbpf ? "eBPF (connect, sendto, sendmsg)" : "/proc sampler";
   const captureMode = st.dns && st.dns.active ? "DNS capture" : "reverse DNS";
   const LOGO =
     "https://raw.githubusercontent.com/Wraith-security/legion_runner/main/assets/logo.jpg";
@@ -1487,6 +1571,11 @@ async function post() {
       md += "\n_No egress was denied (everything the job reached was allowlisted), ";
       md += "or kernel-log access was unavailable to enumerate drops._\n";
     }
+  }
+
+  if (lostEvents > 0) {
+    warn(`Legion Runner: the eBPF agent lost ${lostEvents} event(s) to a full buffer; the table may be incomplete`);
+    md += `\n> ⚠ The eBPF agent lost **${lostEvents}** event(s) to a full ring buffer, so the table above may be incomplete.\n`;
   }
 
   // DNS lookups the forwarder refused (names outside the allowlist).
@@ -1740,5 +1829,8 @@ module.exports = {
   realUpstream,
   sudoersRule,
   renderIntegrity,
+  GITHUB_EGRESS,
   defaultIfaceFromRoute,
+  readPolicyEntries,
+  dockerBridgeIp,
 };
