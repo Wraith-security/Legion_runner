@@ -47,8 +47,11 @@ Unreleased section.
 - `scripts/precheck.sh` fails when build output (a `target/` directory) is
   tracked, and `/agent/target` is ignored. The eBPF workspace builds outside
   the root `/target`, so its output was not covered.
+- CI (the release gate) dogfoods the action from the commit under test
+  (`uses: ./`) instead of the pinned v1.0.61. That old release still had the
+  resolv.conf bug fixed above, so the gate kept failing on artifact uploads and
+  no release could be cut. Other workflows stay on a released tag.
 
-## [1.2.0] - 2026-11-25
 
 ### Security
 - **Block mode no longer leaves DNS open.** Port 53 was allowed to every
