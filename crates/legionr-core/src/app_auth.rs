@@ -3,15 +3,15 @@
 //! Instead of a long-lived PAT, Legion Runner can authenticate as a **GitHub
 //! App installation**: it signs a short-lived JWT with the App's private key,
 //! exchanges it for an **installation access token** (~1 hour), and uses that
-//! as the runner-management credential. Nothing durable is stored — the token
+//! as the runner-management credential. Nothing durable is stored, the token
 //! is minted on demand and, like a PAT, is stripped from the job's environment
 //! before a job runs.
 //!
 //! Configuration (environment):
-//! - `LEGIONR_APP_ID` — the App's numeric ID (enables this flow).
-//! - `LEGIONR_APP_PRIVATE_KEY` — the PEM contents of a private key, **or**
-//! - `LEGIONR_APP_PRIVATE_KEY_FILE` — a path to the `.pem`.
-//! - `LEGIONR_APP_INSTALLATION_ID` — optional; when omitted the installation is
+//! - `LEGIONR_APP_ID`: the App's numeric ID (enables this flow).
+//! - `LEGIONR_APP_PRIVATE_KEY`: the PEM contents of a private key, **or**
+//! - `LEGIONR_APP_PRIVATE_KEY_FILE`: a path to the `.pem`.
+//! - `LEGIONR_APP_INSTALLATION_ID`: optional; when omitted the installation is
 //!   discovered from the target scope.
 //!
 //! A static `LEGIONR_TOKEN`/`GITHUB_TOKEN` still takes precedence, so existing
@@ -176,7 +176,7 @@ impl AppAuth {
             }
         };
         // `{:#}` renders the full anyhow context chain (e.g. GitHub's 401 message),
-        // not just the outermost context — the useful part for a diagnostic.
+        // not just the outermost context, the useful part for a diagnostic.
         let installations = self
             .list_installations(&http)
             .await

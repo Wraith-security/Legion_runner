@@ -6,7 +6,7 @@
 //! 3. an **nftables** egress allowlist (default-deny outbound).
 //!
 //! Everything here is pure string generation so it can be unit-tested and
-//! diffed in review — no host mutation happens in this module.
+//! diffed in review: no host mutation happens in this module.
 
 use crate::config::RunnerConfig;
 
@@ -199,7 +199,7 @@ impl<'a> HardeningProfile<'a> {
 
     /// Generate a `sysctl.d` drop-in tightening the kernel for a CI host.
     pub fn sysctl_dropin(&self) -> String {
-        "# Legion Runner — kernel hardening for CI hosts\n\
+        "# Legion Runner: kernel hardening for CI hosts\n\
          # Restrict kernel pointer / dmesg exposure.\n\
          kernel.kptr_restrict = 2\n\
          kernel.dmesg_restrict = 1\n\
@@ -308,12 +308,12 @@ impl<'a> HardeningProfile<'a> {
     /// and the default-deny chain starts dropping legitimate egress (#72). A
     /// timer runs this on a cadence: for each address family that resolved to at
     /// least one IP, `flush set` + `add element` run in a single `nft -f`
-    /// transaction (atomic — no window where the set is empty and the host is
+    /// transaction (atomic: no window where the set is empty and the host is
     /// fenced off). A family that resolved to *nothing* this cycle is left
     /// untouched rather than flushed to empty, so a transient DNS failure can
     /// never brick a host that was reachable a moment ago.
     ///
-    /// Returns an empty string when neither family resolved — the caller refuses
+    /// Returns an empty string when neither family resolved, the caller refuses
     /// to pipe an empty transaction to `nft` (there is nothing safe to do).
     pub fn nftables_refresh(&self, v4: &[String], v6: &[String]) -> String {
         let mut out = String::new();
@@ -595,7 +595,7 @@ mod tests {
     #[test]
     fn refresh_is_atomic_and_never_flushes_to_empty() {
         // #72: the refresh flushes then re-adds each family in ONE transaction,
-        // and only touches a family that actually resolved — a family with no
+        // and only touches a family that actually resolved, a family with no
         // IPs this cycle is left alone, never flushed to empty (anti-brick).
         let c = cfg();
         let p = HardeningProfile::new(&c);

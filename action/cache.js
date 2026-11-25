@@ -1,4 +1,4 @@
-// Legion Harden Runner — GitHub Actions cache client (dependency-free).
+// Legion Harden Runner: GitHub Actions cache client (dependency-free).
 //
 // Persists the learned egress baseline across runs *inside the action*, so a
 // consumer needs no committed file and no extra workflow: run once in audit
@@ -7,7 +7,7 @@
 // cache service isn't available, so the action never breaks.
 //
 // Speaks the GitHub Actions Cache v2 (Twirp) API using the runtime token that
-// GitHub injects into the job environment — no workflow permissions required.
+// GitHub injects into the job environment, no workflow permissions required.
 
 "use strict";
 

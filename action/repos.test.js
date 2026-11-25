@@ -1,5 +1,5 @@
 // Tests for package-repository classification (action/repos.js).
-// Run with: node --test action/   (Node's built-in runner — no deps).
+// Run with: node --test action/   (Node's built-in runner, no deps).
 
 "use strict";
 

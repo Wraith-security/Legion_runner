@@ -1,4 +1,4 @@
-//! `legionr-fim` — the Legion Runner file-integrity agent.
+//! `legionr-fim`: the Legion Runner file-integrity agent.
 //!
 //! A tiny, dependency-light binary the Harden Runner action drives at runtime
 //! (the same release-asset pattern as the `legionr-bpf` eBPF agent). The real
@@ -29,7 +29,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "legionr-fim — Legion Runner file-integrity agent\n\n\
+                "legionr-fim: Legion Runner file-integrity agent\n\n\
                  usage:\n  \
                  legionr-fim snapshot <out.json> [--workspace DIR] [--extra PATH]...\n  \
                  legionr-fim diff <snapshot.json>"
@@ -113,7 +113,7 @@ fn cmd_diff(args: &[String]) -> ExitCode {
     {
         Some(s) => s,
         None => {
-            // No usable baseline — emit an empty change set, not an error, so the
+            // No usable baseline: emit an empty change set, not an error, so the
             // action's post step degrades gracefully.
             println!("[]");
             return ExitCode::SUCCESS;

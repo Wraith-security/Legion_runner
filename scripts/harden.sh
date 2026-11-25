@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Legion Runner — host hardening.
+# Legion Runner: host hardening.
 #
 # Applies the three artifacts the `legionr` control plane generates:
 #   * systemd unit      → /etc/systemd/system/legionr@.service

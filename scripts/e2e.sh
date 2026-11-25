@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Legion Runner — end-to-end lifecycle harness.
+# Legion Runner: end-to-end lifecycle harness.
 #
 # Closes the "CI only runs unit tests" gap: this actually drives the real
 # control-plane binary through install -> provision -> harden -> (serve one

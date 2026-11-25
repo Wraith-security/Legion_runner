@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Legion Runner — Linux install script (the "backbone").
+# Legion Runner: Linux install script (the "backbone").
 #
 # Creates two unprivileged users, fetches GitHub's official runner release,
 # unpacks it as a read-only template, builds the `legionr` control-plane binary,
@@ -101,7 +101,7 @@ if command -v cargo >/dev/null 2>&1; then
     install -m 0755 "$(dirname "$0")/../target/release/legionr" "$BIN_DST"
     log "installed ${BIN_DST}"
 else
-    warn "cargo not found — skipping legionr build."
+    warn "cargo not found: skipping legionr build."
     warn "install Rust (https://rustup.rs) then: cargo build --release -p legionr-cli"
 fi
 

@@ -31,7 +31,7 @@ jobs:
           persist-credentials: false
 
       - name: Harden runner (Legion, BLOCK)
-        uses: Wraith-security/legion_runner@v1.0.61   # dogfood our own action
+        uses: Wraith-security/legion_runner@v1.2.0   # dogfood our own action
         with:
           egress-policy: block
           allowed-presets: pip   # pipx run zizmor fetches from PyPI

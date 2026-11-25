@@ -30,7 +30,7 @@ use legionr_core::{data_dir, RunnerConfig, VERSION};
 #[derive(Parser)]
 #[command(
     name = "legionr",
-    about = "Legion Runner – hardened, ephemeral, single-use GitHub Actions runner",
+    about = "Legion Runner: hardened, ephemeral, single-use GitHub Actions runner",
     long_about = None,
     version
 )]
@@ -373,7 +373,7 @@ fn harden(config: Option<PathBuf>, install: bool, instance: &str, refresh: bool)
         return Ok(());
     }
 
-    // #71: never install a default-deny firewall with EMPTY allow sets — that
+    // #71: never install a default-deny firewall with EMPTY allow sets, that
     // takes the host off the network, the operator's management path included.
     // Resolve the allowlist, refuse if nothing resolved, and write POPULATED sets.
     let (v4, v6) = resolve_allow_ips(&profile.egress_hosts());
@@ -584,7 +584,9 @@ async fn doctor(config: Option<PathBuf>) -> Result<()> {
                 }
             }
             Ok(_) => {
-                println!("  ✗ the App is not installed anywhere: open the App page, then Install App");
+                println!(
+                    "  ✗ the App is not installed anywhere: open the App page, then Install App"
+                );
                 ok = false;
             }
             Err(e) => {
@@ -607,7 +609,7 @@ async fn doctor(config: Option<PathBuf>) -> Result<()> {
         println!("\nAll checks passed: ready to `legionr run`.");
         Ok(())
     } else {
-        // A failed preflight is an expected, actionable result — report it
+        // A failed preflight is an expected, actionable result, report it
         // concisely and exit non-zero, without an error backtrace.
         println!(
             "\nPreflight checks failed: resolve the ✗ items above, then re-run `legionr doctor`."

@@ -2,11 +2,11 @@
 //!
 //! Two credential flows are supported, both single-use:
 //!
-//! 1. **JIT config** (preferred) — `generate-jitconfig` returns an opaque,
+//! 1. **JIT config** (preferred): `generate-jitconfig` returns an opaque,
 //!    pre-baked, just-in-time runner configuration. The runner consumes it with
 //!    `run.sh --jitconfig <blob>` and is ephemeral by construction: it cannot
 //!    re-register, and the credential is bound to one runner identity.
-//! 2. **Registration token** — the classic `config.sh --token` flow, used with
+//! 2. **Registration token**: the classic `config.sh --token` flow, used with
 //!    `--ephemeral` so the runner still deregisters after one job.
 //!
 //! The caller's GitHub token (PAT or app token) is held only in memory.
@@ -74,7 +74,7 @@ impl GitHubClient {
     /// 1. a static `LEGIONR_TOKEN` / `GITHUB_TOKEN` (PAT or pre-minted token);
     /// 2. otherwise, the **Legion Runner GitHub App** (`LEGIONR_APP_ID` +
     ///    `LEGIONR_APP_PRIVATE_KEY[_FILE]`), which mints a short-lived
-    ///    installation token for this scope on the spot — no PAT anywhere.
+    ///    installation token for this scope on the spot, no PAT anywhere.
     pub async fn from_env_for_scope(scope: &Scope) -> Result<Self> {
         if let Ok(token) = token_from_env() {
             return Self::new(token);
@@ -91,7 +91,7 @@ impl GitHubClient {
         anyhow::bail!(
             "no GitHub credential found; set LEGIONR_TOKEN (a PAT with 'manage runners'), \
              or configure the Legion Runner GitHub App via LEGIONR_APP_ID + \
-             LEGIONR_APP_PRIVATE_KEY (or LEGIONR_APP_PRIVATE_KEY_FILE) — see docs/github-app.md"
+             LEGIONR_APP_PRIVATE_KEY (or LEGIONR_APP_PRIVATE_KEY_FILE): see docs/github-app.md"
         )
     }
 

@@ -1,12 +1,11 @@
-// Legion Harden Runner — eBPF capture launcher (JS side).
+// Legion Harden Runner: eBPF capture launcher (JS side).
 //
 // The eBPF program itself is a Rust/aya agent (`legionr-bpf`, see
-// crates/legionr-bpf): a tracepoint on sys_enter_connect that prints one
-// "LEGIONC <ip> <port> <pid> <comm>" line per outbound connection — socket-layer
-// capture that nss-resolve / systemd-resolved cannot bypass, with process
-// attribution. This module only locates and parses that agent's output; the
-// action spawns it privileged. Falls back to the /proc sampler when the
-// agent or kernel BTF is unavailable, so there is never a regression.
+// agent/): tracepoints on connect, sendto and sendmsg that print one
+// "LEGIONC"/"LEGIONU" line per destination with the caller's pid and name, so
+// a custom resolver or a hard-coded IP is still seen. This module only locates
+// and parses that agent's output; the action spawns it privileged. Falls back
+// to the /proc sampler when the agent is unavailable or fails to load.
 
 "use strict";
 

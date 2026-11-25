@@ -1,9 +1,9 @@
-// Legion Harden Runner — DNS capture forwarder (detached, runs as root).
+// Legion Harden Runner: DNS capture forwarder (detached, runs as root).
 //
 // Binds a local UDP resolver on 127.0.0.1:<port>, relays every query verbatim
 // to the real upstream, and logs the `domain -> IP` answers (A/AAAA) so the
 // action can label outbound connections with the exact hostname the job asked
-// for — accuracy reverse-DNS can't match. Relay is type-agnostic (the raw
+// for: accuracy reverse-DNS can't match. Relay is type-agnostic (the raw
 // packet is forwarded both ways), so SRV/TXT/CNAME/etc. all work normally.
 //
 //   sudo node dnscap.js <logFile> <upstreamIp> [port] [enforce 0|1] [allow-csv] [refusedLog]
@@ -24,7 +24,7 @@ const logFile = process.argv[2];
 const upstream = process.argv[3] || "127.0.0.53";
 const port = parseInt(process.argv[4], 10) || 53;
 // Enforcement: when on, IPs answered for an allowlisted domain are added to the
-// firewall (LEGION_EGRESS chain) before the reply is relayed — block-by-domain.
+// firewall (LEGION_EGRESS chain) before the reply is relayed, block-by-domain.
 const ENFORCE = process.argv[5] === "1";
 const REFUSED_LOG = process.argv[7] || "";
 // Entries are "host" (every port) or "host:443+8443" (only those ports).

@@ -1,4 +1,4 @@
-// Legion Harden Runner — file-integrity launcher (JS side).
+// Legion Harden Runner: file-integrity launcher (JS side).
 //
 // The integrity engine itself is a Rust binary (`legionr-fim`, see
 // crates/legionr-fim + the fim module in crates/legionr-core): it snapshots the
@@ -6,10 +6,10 @@
 // .git config + hooks, and any already-checked-out source) and diffs them at
 // job end, emitting JSON. This module only locates/downloads that binary,
 // drives it, and renders the result as a markdown table. If the binary is
-// unavailable the feature skips silently — never a build break.
+// unavailable the feature skips silently, never a build break.
 //
 // Why Rust: the hashing walk is the security-sensitive, performance-critical
-// path, kept in a compiled, auditable binary alongside the eBPF agent — the JS
+// path, kept in a compiled, auditable binary alongside the eBPF agent, the JS
 // here is a thin orchestrator only. renderChanges/severityFor are pure and
 // exported for the test suite.
 
@@ -38,7 +38,7 @@ function binPath() {
 }
 
 // Resolve a usable binary: a local one, else best-effort download of the latest
-// release asset (x86_64 glibc Linux). Returns a path or null — callers skip FIM
+// release asset (x86_64 glibc Linux). Returns a path or null, callers skip FIM
 // on null. No kernel/BTF requirement (pure userspace file hashing).
 async function ensureBinary(opts = {}) {
   const local = binPath();

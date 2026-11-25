@@ -1,11 +1,11 @@
 //! # legionr-core
 //!
-//! Core engine for **Legion Runner** — a hardened, ephemeral, single-use
+//! Core engine for **Legion Runner**, a hardened, ephemeral, single-use
 //! GitHub Actions runner for Linux.
 //!
 //! The design goal: every CI job lands on a *fresh* runner that accepts exactly
-//! one job and then self-destructs. No state — credentials, caches, workspace,
-//! or implanted tooling — survives between jobs, which is the strongest
+//! one job and then self-destructs. No state, credentials, caches, workspace,
+//! or implanted tooling survives between jobs, which is the strongest
 //! practical defense against poisoned-pipeline persistence.
 //!
 //! Modules:

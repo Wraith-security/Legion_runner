@@ -2,7 +2,7 @@
 //!
 //! When enabled, the runner host joins the tailnet at boot with an ephemeral,
 //! pre-authorized, tagged auth key, so it is reachable over Tailscale SSH and
-//! stays manageable even under the default-deny egress firewall — the mesh is
+//! stays manageable even under the default-deny egress firewall, the mesh is
 //! opened in the nftables allowlist, so a locked-down host never strands the
 //! operator. On teardown the node logs out; because the auth key is ephemeral
 //! the tailnet also drops the device automatically, which matches the runner's
@@ -11,7 +11,7 @@
 //! Everything here is pure and unit-tested: the `tailscale up` / `logout` argv,
 //! the nftables allow rules, and the control hostnames that go into the resolved
 //! allow set. Runtime bring-up is driven by the bootstrap/systemd layer and is
-//! validated end to end there — not by these builders.
+//! validated end to end there, not by these builders.
 
 use serde::{Deserialize, Serialize};
 
@@ -38,7 +38,7 @@ pub struct TailscaleConfig {
     #[serde(default = "default_auth_key_env")]
     pub auth_key_env: String,
 
-    /// ACL tag advertised for this runner — its identity in tailnet policy.
+    /// ACL tag advertised for this runner, its identity in tailnet policy.
     #[serde(default = "default_tag")]
     pub tag: String,
 
@@ -56,7 +56,7 @@ pub struct TailscaleConfig {
 
     /// Control server URL. Unset uses Tailscale's hosted coordinator (needs a
     /// Tailscale account/plan). Set it to a self-hosted **Headscale** URL to run
-    /// the whole control plane yourself — no Tailscale subscription, no third
+    /// the whole control plane yourself, no Tailscale subscription, no third
     /// party in the trust boundary. Same client, same WireGuard data plane.
     #[serde(default)]
     pub login_server: Option<String>,
@@ -220,7 +220,7 @@ mod tests {
         let rules = TailscaleConfig::default().nft_allow_rules();
         assert!(rules.iter().any(|r| r.contains("udp dport 41641")));
         assert!(rules.iter().any(|r| r.contains("udp dport 3478")));
-        // Must NOT blanket-open 443 — that would defeat default-deny; the control
+        // Must NOT blanket-open 443: that would defeat default-deny; the control
         // hosts are allowlisted by name instead.
         assert!(!rules.iter().any(|r| r.contains("dport 443")));
     }

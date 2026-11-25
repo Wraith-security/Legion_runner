@@ -1,22 +1,22 @@
 //! File-integrity monitoring (FIM).
 //!
 //! A poisoned action or compromised dependency doesn't only call home over the
-//! network — it tampers with files: overwriting a checked-out build script,
+//! network; it tampers with files, overwriting a checked-out build script,
 //! planting a git hook, or rewriting credential/config files to exfiltrate or
 //! persist (the `tj-actions` class of attack). This module snapshots the
 //! high-value tamper targets at job start and diffs them at job end, surfacing
 //! anything that changed during the run.
 //!
 //! Two scopes, by severity:
-//! - **Sensitive** — credential/config files plus the repo's `.git/config` and
+//! - **Sensitive**: credential/config files plus the repo's `.git/config` and
 //!   hooks. These exist regardless of where the action is placed and are the
 //!   prime tamper targets, so any change is a high-signal event.
-//! - **Source** — files already present in the workspace at job start. A change
+//! - **Source**: files already present in the workspace at job start. A change
 //!   here means a checked-out file was overwritten/deleted mid-job. Active only
 //!   when the workspace already holds the repo (action placed after checkout, or
 //!   a re-run).
 //!
-//! Only file *hashes* (sha256) are ever stored or compared — never contents —
+//! Only file *hashes* (sha256) are ever stored or compared, never contents,
 //! so snapshotting a private key or `.npmrc` records no secret material.
 
 use std::collections::BTreeMap;
@@ -35,7 +35,7 @@ pub const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
 /// snapshot run away. Sensitive files are never capped.
 pub const MAX_SOURCE_FILES: usize = 20_000;
 
-/// Directories a build legitimately churns — excluded from the source scope so
+/// Directories a build legitimately churns, excluded from the source scope so
 /// artifacts and dependency trees don't drown out a real tamper signal.
 const SKIP_DIRS: &[&str] = &[
     ".git",
@@ -67,7 +67,7 @@ const SKIP_DIRS: &[&str] = &[
 /// Credential/config files that should never change during a CI job, relative
 /// to `$HOME`. `*` is a single-level glob over the basename.
 ///
-/// NOTE: `/etc/resolv.conf` and `/etc/nsswitch.conf` are intentionally omitted —
+/// NOTE: `/etc/resolv.conf` and `/etc/nsswitch.conf` are intentionally omitted,
 /// the action's DNS-capture feature rewrites them itself, so they are not
 /// tamper signals here.
 const SENSITIVE_HOME: &[&str] = &[
@@ -352,7 +352,7 @@ fn diff_map(
 }
 
 /// Diff the current filesystem against a snapshot. Returns change records sorted
-/// by path. New files are not reported (a build creates many) — only changes to
+/// by path. New files are not reported (a build creates many), only changes to
 /// the tracked tamper targets. A path tracked in both scopes (e.g. an
 /// `fim-extra-paths` file that lives inside the workspace) is reported once,
 /// under the higher-severity `sensitive` scope.

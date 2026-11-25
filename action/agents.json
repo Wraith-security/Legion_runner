@@ -1,7 +1,7 @@
 {
-  "release": "v1.0.61",
+  "release": "v1.2.0",
   "assets": {
-    "legionr-bpf": "eaf59ffaf1eedc178b3e4e747d87883b03ce526cd1fa58ce64584cb2e09abf26",
-    "legionr-fim": "6e71e8aa4434c2a8dd8a35c981513103409b2bde83c93ac80ce57dc696cbb665"
+    "legionr-bpf": "48ba98e05ebe49b643dbbf4c04e5a712c7915abdb9bd9ae375939e03171cc94f",
+    "legionr-fim": "2ca10b0ad8ebd7d537e9233dbb51460f4c89db1908a8972aa647194344d75b7e"
   }
 }

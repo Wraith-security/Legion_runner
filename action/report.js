@@ -1,4 +1,4 @@
-// Legion Harden Runner — cross-job egress report (dependency-free).
+// Legion Harden Runner: cross-job egress report (dependency-free).
 //
 // GitHub job summaries are per-job; there is no run-level summary. To produce a
 // SINGLE report covering every job, each hardened job emits its captured egress

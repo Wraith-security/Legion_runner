@@ -37,7 +37,7 @@ jobs:
           persist-credentials: false
 
       - name: Harden (block) with an inline allowlist
-        # Tests THIS repo's enforcement code (not the published action) — that's
+        # Tests THIS repo's enforcement code (not the published action), that's
         # the point of the self-test. Consumers reference the Marketplace @v1.
         uses: ./
         with:
@@ -47,8 +47,8 @@ jobs:
           dns-capture: 'false'        # exercise the static-seed enforcement path
           job-summary: 'false'        # self-test, not a report: keep it out of the summary
           ebpf: 'off'                 # this test is about the firewall, not
-                                      # capture — no agent to spawn/clean up
-          learned-baseline: 'false'   # inline allowlist ONLY — ignore the shared
+                                      # capture: no agent to spawn/clean up
+          learned-baseline: 'false'   # inline allowlist ONLY, ignore the shared
                                       # Actions-cache baseline so the deny case is
                                       # deterministic (not polluted by other runs)
 
@@ -60,14 +60,14 @@ jobs:
           echo "example.com (allowlisted) exit=$learned   (expect 0 = allowed)"
           echo "wikipedia   (not listed)  exit=$unlearned (expect non-zero = denied)"
           if [ "$learned" -eq 0 ] && [ "$unlearned" -ne 0 ]; then
-            echo "PASS — block enforcement verified (allow + deny)."
+            echo "PASS: block enforcement verified (allow + deny)."
           else
-            echo "FAIL — allow/deny did not match expectations."
+            echo "FAIL: allow/deny did not match expectations."
             exit 1
           fi
 
-  # Reliability gate: run the FULL block path — firewall + DNS-capture forwarder
-  # (dynamic allow-by-domain) + eBPF agent + the firewall/daemon teardown — and
+  # Reliability gate: run the FULL block path, firewall + DNS-capture forwarder
+  # (dynamic allow-by-domain) + eBPF agent + the firewall/daemon teardown, and
   # prove the job FINALIZES. If any daemon leaks or the firewall isn't torn down,
   # the runner hangs at teardown and this job hits the timeout and fails. This is
   # the guard for the whole class of teardown-hang bugs.
@@ -96,7 +96,7 @@ jobs:
         run: |
           set -e
           curl -sS --max-time 25 -o /dev/null https://example.com
-          echo "example.com reachable under block + dns-capture — dynamic allow works."
+          echo "example.com reachable under block + dns-capture, dynamic allow works."
           # The decisive assertion is implicit: the post step tears down the
           # firewall + every daemon; if it doesn't, this job times out.
 

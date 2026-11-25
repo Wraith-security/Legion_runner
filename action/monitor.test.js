@@ -1,10 +1,10 @@
 // Tests for the egress sampler (action/monitor.js).
 //
-// Two kinds: deterministic /proc parsing, and a real process-LIFECYCLE test —
+// Two kinds: deterministic /proc parsing, and a real process-LIFECYCLE test,
 // spawn the monitor exactly as the action does, then SIGTERM it and assert it
 // dies promptly. That lifecycle test is the one that matters: a monitor that
 // can't be reaped (e.g. stuck in a blocking subprocess) orphans the GitHub
-// runner and hangs the job at teardown — the exact regression we shipped.
+// runner and hangs the job at teardown, the exact regression we shipped.
 //
 // Run with: node --test action/*.test.js
 
@@ -43,7 +43,7 @@ test("monitor shells out to NO subprocess (reads /proc, never ss)", () => {
   assert.doesNotMatch(
     src,
     /child_process|execSync|execFileSync|\bspawn\b|"ss |'ss /,
-    "monitor must not spawn a subprocess — a wedged child orphans the runner",
+    "monitor must not spawn a subprocess, a wedged child orphans the runner",
   );
 });
 
@@ -92,7 +92,7 @@ test("monitor stays alive while sampling, then dies promptly on SIGTERM", async 
     process.kill(child.pid, "SIGTERM");
 
     // Poll up to ~2s. A monitor wedged in a blocking subprocess would NOT die
-    // here — that is precisely the orphan-the-runner teardown hang.
+    // here: that is precisely the orphan-the-runner teardown hang.
     let dead = false;
     for (let i = 0; i < 20; i++) {
       await sleep(100);
