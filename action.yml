@@ -51,7 +51,12 @@ inputs:
     required: false
     default: 'true'
   disable-sudo:
-    description: 'Revoke the runner user''s sudo after setup, to stop later privilege use.'
+    description: >-
+      Revoke the job user's sudo after setup (verified: the action checks that
+      sudo -n true fails). Without it, any later step can use sudo to undo block
+      mode, and the summary says so. A root warden removes the firewall when the
+      job ends, so the runner still finalizes. Leave it off if later steps need
+      sudo (apt-get install and the like).
     required: false
     default: 'false'
   disable-telemetry:
@@ -65,8 +70,10 @@ inputs:
   dns-capture:
     description: >-
       Route the resolver through a local logging forwarder to map connections to
-      the exact domains the job resolved (more accurate than reverse DNS).
-      Requires sudo; falls back to reverse DNS if unavailable.
+      the exact domains the job resolved (more accurate than reverse DNS). In
+      block mode every non-root DNS query on the host passes it, and names off
+      the allowlist are refused. Requires sudo; falls back to reverse DNS if
+      unavailable.
     required: false
     default: 'true'
   ebpf:

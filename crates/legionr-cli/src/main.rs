@@ -384,7 +384,22 @@ fn harden(config: Option<PathBuf>, install: bool, instance: &str, refresh: bool)
              which resolves and reloads the allow sets on a timer."
         );
     }
-    let nft = profile.nftables_ruleset_with_ips(&v4, &v6);
+    // DNS may only go to the host's own resolvers; with none found, a
+    // default-deny ruleset would block every lookup on the host.
+    let texts: Vec<String> = ["/run/systemd/resolve/resolv.conf", "/etc/resolv.conf"]
+        .iter()
+        .filter_map(|f| std::fs::read_to_string(f).ok())
+        .collect();
+    let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+    let (dns4, dns6) = legionr_core::harden::parse_resolvers(&refs);
+    if dns4.is_empty() && dns6.is_empty() {
+        anyhow::bail!(
+            "refusing to install: no upstream DNS resolver found in \
+             /run/systemd/resolve/resolv.conf or /etc/resolv.conf, so the firewall \
+             would block every lookup"
+        );
+    }
+    let nft = profile.nftables_ruleset_with_ips(&v4, &v6, &dns4, &dns6);
 
     write_root("/etc/systemd/system/legionr@.service", &unit)?;
     write_root("/etc/sysctl.d/99-legion-runner.conf", &sysctl)?;

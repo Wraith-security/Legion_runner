@@ -7,6 +7,8 @@
 #   make precheck            # or: scripts/precheck.sh
 #   scripts/precheck.sh --e2e  # also the e2e local tier (needs root; installs
 #                               # throwaway users under /opt, so CI or a VM only)
+#   scripts/precheck.sh --action  # also the action smoke run (needs root and
+#                               # unshare; runs in private namespaces)
 #
 # Exits non-zero on the first failing stage. A tool that is not installed is a
 # failure, not a skip, except where noted: a check that silently does not run
@@ -16,10 +18,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 RUN_E2E=0
+RUN_ACTION=0
 BASE="${PRECHECK_BASE:-origin/main}"
 for a in "$@"; do
     case "$a" in
         --e2e) RUN_E2E=1 ;;
+        --action) RUN_ACTION=1 ;;
         *) echo "unknown arg: $a" >&2; exit 2 ;;
     esac
 done
@@ -96,6 +100,12 @@ if [ "$RUN_E2E" -eq 1 ]; then
     step "E2E local tier (root)"
     scripts/e2e.sh --mode local --bin "$ROOT/target/release/legionr"
     ok "e2e"
+fi
+
+if [ "$RUN_ACTION" -eq 1 ]; then
+    step "Action smoke (root, private namespaces)"
+    scripts/action-smoke.sh
+    ok "action smoke"
 fi
 
 printf '\n\033[1;32mprecheck passed\033[0m\n'

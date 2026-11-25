@@ -8,3 +8,5 @@ _work/
 .runner
 .credentials*
 .DS_Store
+# The pinned agent hashes are source, not build output.
+!action/agents.json

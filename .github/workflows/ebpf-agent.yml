@@ -61,6 +61,10 @@ jobs:
         # compiles llvm-sys, which needs a system LLVM matching bpf-linker's
         # pinned version (currently LLVM 23 via llvm-sys 231); the runner has no
         # such llvm-config, so the build fails. The prebuilt binary ships its own.
+        # Authenticated, so GitHub's API does not rate-limit the release lookup
+        # (anonymous calls from runner IPs got HTTP 403 and failed the job).
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: cargo binstall --no-confirm --disable-strategies compile bpf-linker
 
       - name: Userspace unit tests (no kernel needed)

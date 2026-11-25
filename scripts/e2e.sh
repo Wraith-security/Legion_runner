@@ -195,7 +195,7 @@ as_unit() {
 
 run_isolation() {
     log "ISOLATION stage: two-user layout, checked under the unit's privileges ($(have_systemd && echo systemd || echo setpriv))"
-    $SUDO env RUNNER_VERSION="${RUNNER_VERSION:-}" "${ROOT}/scripts/install.sh" >/dev/null
+    $SUDO env RUNNER_VERSION="${RUNNER_VERSION:-}" GITHUB_TOKEN="${GITHUB_TOKEN:-}" "${ROOT}/scripts/install.sh" >/dev/null
     $SUDO install -m 0755 "$BIN" /usr/local/bin/legionr
     $SUDO env LEGIONR_DATA_DIR=/opt/legion-runner /usr/local/bin/legionr --config "$ISO_CFG" \
         provision "$SCOPE" --no-probe --link "" >/dev/null

@@ -12,6 +12,82 @@ Unreleased section.
 ## [Unreleased]
 
 ### Security
+- **Block mode no longer leaves DNS open.** Port 53 was allowed to every
+  address, so a step could send data to its own server on port 53 or tunnel it
+  through lookups. Now only root (Legion's forwarder) and systemd-resolved may
+  send DNS off the runner, every non-root query on the host is redirected to the
+  forwarder (`dig @8.8.8.8` included), and the forwarder answers REFUSED for any
+  name off the allowlist, so it never leaves the runner. The self-hosted
+  firewall allows DNS only to the host's configured resolvers.
+- **Block mode now covers containers.** Container traffic is forwarded and never
+  passed the `OUTPUT` chain, so `docker run` reached any address. A
+  `LEGION_FWD` chain now filters traffic leaving the external interface the same
+  way, and container DNS always goes to the runner's real resolver.
+- **`disable-sudo` works and is verified.** Its rule sorted before the runner
+  image's own sudo grant, and in sudoers the last matching rule wins, so it
+  likely never took effect on GitHub-hosted runners. It now uses a file that
+  sorts last, validates it with `visudo`, and checks that `sudo -n true` fails.
+  A root warden removes the firewall and restores DNS when `Runner.Worker` exits,
+  so a job without sudo (or a cancelled one) still finalizes.
+- **Tamper reporting.** The post step checks whether the firewall chains, the
+  DNS redirect, the forwarder or the eBPF agent were changed during the job and
+  reports it in the summary and as warnings. The summary also says whether job
+  steps kept sudo, and so could have undone block mode.
+- **Agents are pinned.** The root-run eBPF and file-integrity agents were
+  downloaded from `releases/latest` and checked against a `.sha256` from that
+  same release, so pinning the action did not pin them and a replaced release
+  went unnoticed. The action now downloads the release named in
+  `action/agents.json` and runs a binary only if its SHA-256 matches the one
+  committed there. `scripts/pin-agents.sh <tag>` regenerates the pins.
+- **Block mode fails closed.** If setting it up throws, the step now fails and
+  the job stops. Before, the error was a warning and every later step ran with
+  no enforcement while the job looked protected.
+- **Evidence is root-only.** Connection logs, DNS logs, the state file, DNS
+  backups, the file-integrity baseline and the agent binaries now live in
+  `/run/legion` (root, 0700), written by root processes. A step could edit them
+  in `/tmp` before. With `disable-sudo`, the post step reads them through an
+  exact, read-only sudo rule.
+
+### Fixed
+- **Intermittent block-mode timeouts in CI** (`Failed to CreateArtifact:
+  ETIMEDOUT` in the cargo-deny job, which runs a Docker container action).
+  systemd-resolved rewrites `/etc/resolv.conf` when Docker adds interfaces, after
+  which lookups bypassed the forwarder and rotating GitHub endpoints were never
+  allowed. Diagnosis by deduction from the job logs; the DNS redirect above
+  removes the dependency on that file, and the self-test restarts resolved and
+  checks allow-by-domain still works.
+- The action wrote its resolv.conf, nsswitch, resolved and sudoers drafts to
+  fixed names in the shared `/tmp`, which collided with files left by another
+  user or an earlier step (found by the smoke run in CI). They now go to a
+  private directory created per run.
+- Teardown killed Legion's daemons by name across the whole host, so on a
+  shared self-hosted host one job's teardown killed another job's forwarder,
+  agent and monitor (found when the smoke run's warden broke the CI host's own
+  DNS). Each run now tags its daemons with a random token and kills only those.
+- `scripts/install.sh` authenticates its actions/runner release lookup when
+  `GITHUB_TOKEN` is set; the E2E job got HTTP 403 from GitHub's API without it.
+- `cargo-binstall` lookups of `bpf-linker` in CI are authenticated with the
+  job token; anonymous calls got HTTP 403 from GitHub's API and failed builds.
+- The forwarder waits for the xtables lock (`iptables -w`) instead of silently
+  failing to open an allowlisted IP while another process holds it.
+- `legionr harden --install` wrote an nftables file without the Tailscale rules
+  the template had; one generator now produces both, and the file replaces any
+  loaded copy so it can be reloaded. `scripts/harden.sh` loads that file instead
+  of building its own copy.
+
+### Added
+- `scripts/action-smoke.sh` (and `precheck.sh --action`, and a CI step): runs
+  the action as a hosted runner does (non-root user, sudo with `use_pty`, a
+  `Runner.Worker` parent) in private namespaces, through block mode, DNS
+  capture, disable-sudo and the warden's teardown.
+- Enforce self-test jobs on GitHub-hosted runners: DNS refused off the allowlist
+  (including via 1.1.1.1) and allow-by-domain after a resolved restart; block
+  mode inside containers; `disable-sudo` revokes sudo, hides the evidence and
+  the job still finalizes.
+
+## [1.1.0] - 2026-11-25
+
+### Security
 - **Self-hosted runner: jobs no longer share a user with the control plane.**
   Every job now runs as a separate, unprivileged `job_user` (default
   `legionr-job`). Before, a job ran as the same `legionr` user that holds the

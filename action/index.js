@@ -18,6 +18,14 @@ const os = require("node:os");
 const path = require("node:path");
 const cache = require("./cache.js");
 const ebpf = require("./ebpf.js");
+const firewall = require("./firewall.js");
+const warden = require("./warden.js");
+const crypto = require("node:crypto");
+
+// Tags this run's daemons (see warden.daemonPattern) so teardown never kills
+// another Legion job's forwarder or agent on a shared host.
+let RUN_TOKEN = "";
+const runTag = () => `legion-run=${RUN_TOKEN}`;
 const fim = require("./fim.js");
 const repos = require("./repos.js");
 
@@ -71,8 +79,88 @@ function expandPresets(raw, presets = ECOSYSTEM_PRESETS) {
   return { hosts: [...hosts], unknown };
 }
 
-const STATE_FILE = path.join(os.tmpdir(), "legion-harden-state.json");
-const FIM_SNAP_FILE = path.join(os.tmpdir(), "legion-fim-before.json");
+// ── Evidence: root-only when the action has privilege ───────────────────────
+// Logs, the state file, DNS backups, the FIM baseline and the agent binaries
+// live in a root-owned 0700 directory, written by root processes. A job step
+// cannot erase its own connections, pre-hash its own tampering, swap a binary
+// before it runs as root, or point the teardown at a file of its choosing.
+// Without privilege (no root, no sudo) the action falls back to the temp dir
+// and says so in the summary.
+const EVIDENCE_DIR = "/run/legion";
+const TMP_STATE_FILE = path.join(os.tmpdir(), "legion-harden-state.json");
+let EVIDENCE = { dir: os.tmpdir(), protected: false };
+
+function evidencePath(name) {
+  return EVIDENCE.protected ? path.join(EVIDENCE.dir, name) : path.join(os.tmpdir(), `legion-${name}`);
+}
+function stateFile() {
+  return EVIDENCE.protected ? path.join(EVIDENCE.dir, "state.json") : TMP_STATE_FILE;
+}
+
+/// Create the root-only evidence directory. Returns true when protected.
+function setupEvidence() {
+  try {
+    sudo(["rm", "-rf", EVIDENCE_DIR]);
+    sudo(["install", "-d", "-m", "0700", "-o", "root", "-g", "root", EVIDENCE_DIR]);
+    sudo(["install", "-d", "-m", "0755", "-o", "root", "-g", "root", path.join(EVIDENCE_DIR, "bin")]);
+    EVIDENCE = { dir: EVIDENCE_DIR, protected: true };
+  } catch {
+    EVIDENCE = { dir: os.tmpdir(), protected: false };
+  }
+  return EVIDENCE.protected;
+}
+
+/// A path in this run's private 0700 temp directory. Fixed names in the shared
+/// /tmp collide with files another user (or an earlier step) left there, and a
+/// predictable name is a place to plant content that root later copies.
+let _privTmp = null;
+function privateTmp(name) {
+  if (!_privTmp) _privTmp = fs.mkdtempSync(path.join(os.tmpdir(), "legion-run-"));
+  return path.join(_privTmp, name);
+}
+
+/// Install `data` as `dest` owned by root with `mode`. The bytes go through a
+/// private temp file: sudo cannot be fed stdin here, because Ubuntu's sudoers
+/// sets `use_pty`, which puts a pty in front of it (/dev/stdin then fails).
+function installAsRoot(data, dest, mode) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "legion-"));
+  const tmp = path.join(dir, "f");
+  try {
+    fs.writeFileSync(tmp, data, { mode: 0o600 });
+    sudo(["install", "-m", mode, "-o", "root", "-g", "root", tmp, dest]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/// Write an evidence file (root-owned 0600 when protected).
+function writeEvidence(file, data) {
+  if (!EVIDENCE.protected) {
+    fs.writeFileSync(file, data);
+    return;
+  }
+  installAsRoot(data, file, "0600");
+}
+
+/// Read an evidence file as text ("" when unreadable).
+function readEvidence(file) {
+  try {
+    if (!EVIDENCE.protected || IS_ROOT) return fs.readFileSync(file, "utf8");
+    return execFileSync("sudo", ["-n", CAT, file], { stdio: ["ignore", "pipe", "ignore"] }).toString();
+  } catch {
+    return "";
+  }
+}
+
+/// Install a verified agent binary root-owned into the evidence dir.
+function installAgent(buf, name) {
+  const dest = path.join(EVIDENCE.dir, "bin", name);
+  installAsRoot(buf, dest, "0755");
+  return dest;
+}
+
+const CAT = fs.existsSync("/usr/bin/cat") ? "/usr/bin/cat" : "/bin/cat";
+const DMESG = fs.existsSync("/usr/bin/dmesg") ? "/usr/bin/dmesg" : "/bin/dmesg";
 
 // ── Actions helpers (workflow-command protocol, no toolkit) ─────────────────
 function input(name, def = "") {
@@ -324,18 +412,17 @@ async function cacheSaveDomains(domains) {
 async function startEbpf(connectLog, bin) {
   const out = { active: false, log: connectLog };
   if (!bin) return out;
-  const errLog = path.join(os.tmpdir(), "legion-ebpf.err");
+  const errLog = evidencePath("ebpf.err");
   try {
-    fs.writeFileSync(connectLog, "");
-    fs.writeFileSync(errLog, "");
-    const outFd = fs.openSync(connectLog, "a");
-    const errFd = fs.openSync(errLog, "a");
-    const child = spawnPrivileged(bin, [], {
+    writeEvidence(connectLog, "");
+    writeEvidence(errLog, "");
+    // Root opens both logs (inside the root-only evidence dir when protected),
+    // so the job cannot rewrite the connection record. stderr is kept: loading
+    // eBPF can fail for real reasons (no BTF, no CAP_BPF, old kernel) and the
+    // agent prints why.
+    const child = spawnPrivileged(process.execPath, [path.join(__dirname, "launch.js"), bin, connectLog, errLog, runTag()], {
       detached: true,
-      // Capture the agent's stderr — do NOT discard it. Loading eBPF can fail
-      // for real reasons (no BTF, no CAP_BPF, old kernel, wrong arch) and the
-      // agent prints why; swallowing it made failures undiagnosable.
-      stdio: ["ignore", outFd, errFd],
+      stdio: "ignore",
     });
     out.pid = child.pid;
     child.unref();
@@ -352,7 +439,7 @@ async function startEbpf(connectLog, bin) {
     }
     if (!alive) {
       const reason =
-        (fs.readFileSync(errLog, "utf8").trim().split("\n").pop() || "agent exited on startup").slice(0, 300);
+        (readEvidence(errLog).trim().split("\n").pop() || "agent exited on startup").slice(0, 300);
       warn(`eBPF agent failed to start (${reason}); using the /proc sampler`);
       return out; // active stays false — the sampler covers capture
     }
@@ -369,86 +456,104 @@ function startMonitor(logFile, intervalSec) {
   // Detached Node sampler (action/monitor.js): prefers `ss`, falls back to
   // /proc/net so it needs no iproute2. Outlives main() to watch the whole job.
   const monitor = path.join(__dirname, "monitor.js");
-  const child = spawn(process.execPath, [monitor, logFile, String(intervalSec)], {
-    detached: true,
-    stdio: "ignore",
-  });
+  const argv = [monitor, logFile, String(intervalSec), runTag()];
+  const opts = { detached: true, stdio: "ignore" };
+  // Root writes the sample log inside the root-only evidence dir.
+  const child = EVIDENCE.protected ? spawnPrivileged(process.execPath, argv, opts) : spawn(process.execPath, argv, opts);
   child.on("error", () => {});
   child.unref();
   return child.pid;
 }
 
-// ── Block-mode firewall (iptables + ip6tables) ──────────────────────────────
-const EGRESS_CHAIN = "LEGION_EGRESS";
+// ── Block-mode firewall (see firewall.js) ──────────────────────────────────
+const { egressBlockRules, egressUnblockRules } = firewall;
+const privExec = (argv) => sudo(argv);
+const privList = (bin, chain) => sudoOut([bin, "-S", chain]);
 
-/// Pure: the ordered rules appended to the LEGION_EGRESS chain for one address
-/// family — loopback, established, DNS, each allowlisted IP, a rate-limited LOG,
-/// then the terminal default-deny DROP. Order matters; unit-tested.
-function egressBlockRules(ips) {
-  return [
-    ["-A", EGRESS_CHAIN, "-o", "lo", "-j", "ACCEPT"],
-    ["-A", EGRESS_CHAIN, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
-    ["-A", EGRESS_CHAIN, "-p", "udp", "--dport", "53", "-j", "ACCEPT"],
-    ["-A", EGRESS_CHAIN, "-p", "tcp", "--dport", "53", "-j", "ACCEPT"],
-    ...ips.map((ip) => ["-A", EGRESS_CHAIN, "-d", ip, "-j", "ACCEPT"]),
-    ["-A", EGRESS_CHAIN, "-m", "limit", "--limit", "60/min", "--limit-burst", "20",
-      "-j", "LOG", "--log-prefix", "LEGION-DENY ", "--log-level", "4"],
-    ["-A", EGRESS_CHAIN, "-j", "DROP"],
-  ];
+/// Every non-loopback nameserver the host is configured with, per family.
+function upstreamResolvers() {
+  const v4 = new Set();
+  const v6 = new Set();
+  for (const f of ["/run/systemd/resolve/resolv.conf", "/etc/resolv.conf"]) {
+    try {
+      for (const line of fs.readFileSync(f, "utf8").split("\n")) {
+        const m = line.trim().match(/^nameserver\s+(\S+)/);
+        if (!m) continue;
+        const ip = m[1].replace(/%.*$/, "");
+        if (ip.startsWith("127.") || ip === "::1") continue;
+        (ip.includes(":") ? v6 : v4).add(ip);
+      }
+    } catch {
+      /* file absent */
+    }
+  }
+  return { v4: [...v4], v6: [...v6] };
 }
 
-/// Pure: the teardown commands — the OUTPUT jump MUST be removed first (that is
-/// what restores the runner's egress), then flush, then delete the chain.
-function egressUnblockRules() {
-  return [
-    ["-D", "OUTPUT", "-j", EGRESS_CHAIN],
-    ["-F", EGRESS_CHAIN],
-    ["-X", EGRESS_CHAIN],
-  ];
+/// Pure: the default-route interface from /proc/net/route text ("" if none).
+function defaultIfaceFromRoute(text) {
+  for (const line of (text || "").split("\n").slice(1)) {
+    const f = line.trim().split(/\s+/);
+    if (f.length > 7 && f[1] === "00000000" && f[7] === "00000000") return f[0];
+  }
+  return "";
+}
+
+/// The interface the default route leaves through ("" when unknown).
+function defaultIface() {
+  try {
+    const iface = defaultIfaceFromRoute(fs.readFileSync("/proc/net/route", "utf8"));
+    if (iface) return iface;
+  } catch {
+    /* fall back to ip(8) */
+  }
+  try {
+    const out = execFileSync("ip", ["-o", "route", "show", "default"], {
+      stdio: ["ignore", "pipe", "ignore"],
+    }).toString();
+    const m = out.match(/\bdev\s+(\S+)/);
+    return m ? m[1] : "";
+  } catch {
+    return "";
+  }
+}
+
+/// uid of a system user, or null.
+function uidOf(user) {
+  try {
+    const v = execFileSync("id", ["-u", user], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+    return /^\d+$/.test(v) ? v : null;
+  } catch {
+    return null;
+  }
 }
 
 function applyEgressBlock(ipv4, ipv6) {
-  for (const [bin, ips] of [
-    ["iptables", ipv4],
-    ["ip6tables", ipv6],
-  ]) {
-    try {
-      sudo([bin, "-N", EGRESS_CHAIN]);
-    } catch {
-      sudo([bin, "-F", EGRESS_CHAIN]);
-    }
-    try {
-      sudo([bin, "-C", "OUTPUT", "-j", EGRESS_CHAIN]);
-    } catch {
-      sudo([bin, "-A", "OUTPUT", "-j", EGRESS_CHAIN]);
-    }
-    for (const rule of egressBlockRules(ips)) {
-      try {
-        sudo([bin, ...rule]);
-      } catch (e) {
-        // The LOG target may be unavailable on some kernels; tolerate just that.
-        // Every other rule (incl. the terminal DROP) must apply.
-        if (!rule.includes("LOG")) throw e;
-      }
-    }
-  }
+  const r = upstreamResolvers();
+  const resolvedUid = uidOf("systemd-resolve");
+  const plan = {
+    v4: ipv4,
+    v6: ipv6,
+    // systemd-resolved talks to the upstream itself; with DNS capture its
+    // queries are redirected to the forwarder anyway (nat happens first).
+    dnsUids: resolvedUid ? [resolvedUid] : [],
+    resolvers4: r.v4,
+    resolvers6: r.v6,
+    extIface: defaultIface(),
+  };
+  firewall.applyAll(privExec, plan);
+  return plan;
 }
 
-/// Remove the block-mode firewall so the runner's own teardown egress (it must
-/// reach GitHub to report job completion / upload logs) isn't dropped. Leaving
-/// LEGION_EGRESS in OUTPUT past the job hangs the runner at finalization — the
-/// rotating GitHub-backend IPs aren't in the static seed. Best-effort, both
-/// families. Removing the OUTPUT jump first is what restores normal egress.
+/// Remove every Legion chain, jump and redirect. Best-effort, idempotent.
 function removeEgressBlock() {
-  for (const bin of ["iptables", "ip6tables"]) {
-    for (const cmd of egressUnblockRules()) {
-      try {
-        sudo([bin, ...cmd]);
-      } catch {
-        /* already gone / chain absent — best-effort */
-      }
+  firewall.removeAll((argv) => {
+    try {
+      sudo(argv);
+    } catch {
+      /* already gone */
     }
-  }
+  }, privList);
 }
 
 /// Parse denied destinations from kernel-log lines our LOG rule emitted.
@@ -466,7 +571,7 @@ function parseDeniedLog(text) {
 
 /// Read the kernel log (best-effort, needs privilege) and return denied peers.
 function readDeniedDestinations() {
-  for (const cmd of [["dmesg"], ["journalctl", "-k", "--no-pager", "-n", "2000"]]) {
+  for (const cmd of [[DMESG], ["journalctl", "-k", "--no-pager", "-n", "2000"]]) {
     try {
       const out = sudoOut(cmd);
       if (out) {
@@ -480,7 +585,78 @@ function readDeniedDestinations() {
   return [];
 }
 
-function disableSudo() {
+/// Pure: the sudoers rule that revokes sudo for `user` while keeping the
+/// read-only commands the post step needs (exact paths and arguments, so they
+/// cannot be bent into anything else). Written to a file that sorts after the
+/// runner image's own grant, because in sudoers the LAST matching rule wins.
+function sudoersRule(user, readFiles, extraCommands = []) {
+  if (!/^[a-z_][a-z0-9_-]*\$?$/.test(user)) throw new Error(`unexpected user name ${JSON.stringify(user)}`);
+  const allowed = [...readFiles.map((f) => `${CAT} ${f}`), ...extraCommands];
+  // Absolute command, plain arguments, optionally `""` (= no arguments). No
+  // wildcards, commas, colons or `..`, so a rule can never widen.
+  // Only these binaries: cat, dmesg, and agents in the root-only evidence dir.
+  // A shell or an option (`-c`, `--`) would turn a read into anything at all.
+  const safe = /^\/[A-Za-z0-9_./-]+( [A-Za-z0-9_./][A-Za-z0-9_./-]*)*( "")?$/;
+  const binaries = [CAT, DMESG];
+  for (const c of allowed) {
+    const bin = c.split(" ")[0];
+    const okBin = binaries.includes(bin) || bin.startsWith(`${EVIDENCE_DIR}/bin/`);
+    if (!safe.test(c) || c.includes("..") || !okBin) {
+      throw new Error(`refusing to grant an unsafe sudo command: ${c}`);
+    }
+  }
+  let rule = `${user} ALL=(ALL) !ALL\n`;
+  if (allowed.length) rule += `${user} ALL=(root) NOPASSWD: ${allowed.join(", ")}\n`;
+  return rule;
+}
+
+/// Find the Runner.Worker process that owns this job (null if not found).
+function findWorkerPid(start = process.ppid) {
+  let pid = start;
+  for (let i = 0; i < 8 && pid > 1; i++) {
+    try {
+      const comm = fs.readFileSync(`/proc/${pid}/comm`, "utf8").trim();
+      if (comm === "Runner.Worker") return pid;
+      const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+      pid = parseInt(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1], 10);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/// Start the root warden (teardown on Runner.Worker exit). True if started.
+function startWarden() {
+  if (!EVIDENCE.protected) return false;
+  const worker = findWorkerPid();
+  if (!worker) return false;
+  try {
+    const child = spawnPrivileged(process.execPath, [path.join(__dirname, "warden.js"), EVIDENCE.dir, String(worker)], {
+      detached: true,
+      stdio: "ignore",
+    });
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/// Can this process still run anything as root? (false after disable-sudo)
+function canSudo() {
+  if (IS_ROOT) return true;
+  try {
+    execFileSync("sudo", ["-n", "true"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/// Revoke sudo for the job user. Returns "verified" when `sudo -n true` fails
+/// afterwards, else a reason. Never revokes without a warden to tear down.
+function disableSudo(readFiles, extraCommands) {
   // Use the REAL invoking user (from the uid), never $USER: the env var is job
   // controlled and was interpolated straight into a sudoers rule, so a value
   // like "x ALL=(ALL) NOPASSWD: ALL #" would grant root instead of dropping it.
@@ -488,16 +664,16 @@ function disableSudo() {
   try {
     user = os.userInfo().username;
   } catch {
-    user = "runner";
+    return "cannot determine the job user";
   }
-  // Defense in depth: only a well-formed POSIX username may enter a sudoers rule.
-  if (!/^[a-z_][a-z0-9_-]*\$?$/.test(user)) {
-    warn(`disable-sudo: refusing to write a sudoers rule for unexpected username ${JSON.stringify(user)}`);
-    return;
-  }
-  const tmp = path.join(os.tmpdir(), "legion-no-sudo");
-  fs.writeFileSync(tmp, `${user} ALL=(ALL) !ALL\n`);
-  sudo(["install", "-m", "0440", tmp, "/etc/sudoers.d/99-legion-disable-sudo"]);
+  if (IS_ROOT) return "the job runs as root; there is no sudo to revoke";
+  const rule = sudoersRule(user, readFiles, extraCommands);
+  const tmp = privateTmp("legion-no-sudo");
+  fs.writeFileSync(tmp, rule);
+  sudo(["visudo", "-cf", tmp]); // a broken sudoers file would lock out everyone
+  sudo(["install", "-m", "0440", "-o", "root", "-g", "root", tmp, warden.SUDOERS_FILE]);
+  fs.rmSync(tmp, { force: true });
+  return canSudo() ? "sudo still works after writing the rule (another grant overrides it)" : "verified";
 }
 
 // ── Legion link (co-pair with Legion desktop) ───────────────────────────────
@@ -573,7 +749,7 @@ function redirectSystemdResolved(out, upstream) {
     if (!upstream || upstream.startsWith("127.") || upstream === "::1") return; // would loop
     const dir = "/etc/systemd/resolved.conf.d";
     const dropin = path.join(dir, "legion.conf");
-    const tmp = path.join(os.tmpdir(), "legion-resolved.conf");
+    const tmp = privateTmp("legion-resolved.conf");
     fs.writeFileSync(tmp, "[Resolve]\nDNS=127.0.0.1\nDomains=~.\n");
     sudo(["mkdir", "-p", dir]);
     sudo(["cp", tmp, dropin]);
@@ -643,9 +819,9 @@ async function rerouteNsswitch(out) {
     // Only act if a bypassing module is present (resolve/mymachines/mdns).
     if (!/^hosts:.*\b(resolve|mymachines|mdns)/m.test(nss)) return;
     out.nsswitchTried = true; // a getaddrinfo bypass exists; record we tried
-    const backup = path.join(os.tmpdir(), "nsswitch.conf.legion.bak");
+    const backup = evidencePath("nsswitch.conf.bak");
     sudo(["cp", "/etc/nsswitch.conf", backup]);
-    const tmp = path.join(os.tmpdir(), "nsswitch.legion");
+    const tmp = privateTmp("nsswitch.legion");
     fs.writeFileSync(tmp, nss.replace(/^hosts:.*$/m, "hosts: files myhostname dns"));
     sudo(["cp", tmp, "/etc/nsswitch.conf"]);
     if (await resolvesViaGetaddrinfo()) {
@@ -667,11 +843,14 @@ async function startDnsCapture(opts = {}) {
     active: false,
     pid: null,
     enforce: !!opts.enforce,
-    log: path.join(os.tmpdir(), "legion-dns.log"),
-    backup: path.join(os.tmpdir(), "resolv.conf.legion.bak"),
+    log: evidencePath("dns.log"),
+    refusedLog: evidencePath("dns-refused.log"),
+    backup: evidencePath("resolv.conf.bak"),
+    redirect: false,
   };
   try {
-    fs.writeFileSync(out.log, "");
+    writeEvidence(out.log, "");
+    writeEvidence(out.refusedLog, "");
     // Prefer the real upstream (systemd-resolved's actual servers) over the
     // 127.0.0.53 stub, so the forwarder reaches DNS directly and a possible
     // resolved redirect can't loop.
@@ -685,6 +864,8 @@ async function startDnsCapture(opts = {}) {
       "53",
       opts.enforce ? "1" : "0",
       (opts.domains || []).join(","),
+      out.refusedLog,
+      runTag(),
     ];
     // Bind :53 requires privilege → root directly, else sudo. Detached.
     const child = spawnPrivileged(process.execPath, argv, {
@@ -699,7 +880,7 @@ async function startDnsCapture(opts = {}) {
       throw new Error("local resolver not answering");
     }
     sudo(["cp", "/etc/resolv.conf", out.backup]);
-    const tmp = path.join(os.tmpdir(), "resolv.legion");
+    const tmp = privateTmp("resolv.legion");
     fs.writeFileSync(tmp, "nameserver 127.0.0.1\noptions timeout:2 attempts:2\n");
     sudo(["cp", tmp, "/etc/resolv.conf"]);
     out.active = true;
@@ -707,6 +888,20 @@ async function startDnsCapture(opts = {}) {
       `   DNS capture active (resolver → local logger → ${upstream})` +
         (out.enforce ? ", enforcing allow-by-domain" : ""),
     );
+    // Block mode: send EVERY non-root DNS query on the host through the
+    // forwarder, whatever resolver it names. This covers systemd-resolved's own
+    // upstream queries, so dynamic allow keeps working even when resolved
+    // rewrites /etc/resolv.conf (it does when Docker adds interfaces), and it
+    // stops `dig @8.8.8.8` style tunnels: names off the allowlist are REFUSED.
+    if (out.enforce) {
+      try {
+        firewall.applyDnsRedirect(privExec);
+        out.redirect = true;
+        info("   all non-root DNS on the host now passes the forwarder (names off the allowlist are refused)");
+      } catch (e) {
+        warn(`could not redirect DNS to the forwarder (${e.message}); DNS names are not filtered`);
+      }
+    }
     // Also route getaddrinfo (curl/apt/cargo/git) through the forwarder so their
     // lookups are captured and named, not just resolv.conf/c-ares callers.
     await rerouteNsswitch(out);
@@ -718,14 +913,14 @@ async function startDnsCapture(opts = {}) {
     }
   } catch (e) {
     warn(`DNS capture unavailable (${e.message}); falling back to reverse DNS`);
-    killDnsForwarder(out.pid);
+    killDnsForwarder(out.pid, RUN_TOKEN);
     out.active = false;
   }
   return out;
 }
 
 /// Kill the DNS forwarder by pid (preferred), then by name as a fallback.
-function killDnsForwarder(pid) {
+function killDnsForwarder(pid, token) {
   // pid is the (sudo) launcher; signalling it may not reach the root forwarder,
   // so ALWAYS also pkill by name (no early return). A leaked root forwarder
   // keeps the hosted runner from finalizing the job ("Complete job" hangs).
@@ -741,17 +936,17 @@ function killDnsForwarder(pid) {
     // doesn't match the pattern — otherwise pkill races to kill its own sudo
     // parent and can leave the root forwarder alive, hanging the runner. -9 to
     // be sure (resolv.conf/nsswitch are restored separately).
-    sudo(["pkill", "-9", "-f", "[d]nscap.js"]);
+    sudo(["pkill", "-9", "-f", warden.daemonPattern("dnscap.js", token)]);
   } catch {
     /* nothing to kill / pkill absent */
   }
 }
 
 /// Parse the DNS-capture log into a normalized ip → domain map.
-function readDnsMap(logFile) {
+function readDnsMap(logFile, reader = (f) => fs.readFileSync(f, "utf8")) {
   const map = {};
   try {
-    for (const line of fs.readFileSync(logFile, "utf8").split("\n")) {
+    for (const line of reader(logFile).split("\n")) {
       const tab = line.indexOf("\t");
       if (tab === -1) continue;
       const ip = normalizeIp(line.slice(0, tab).trim());
@@ -765,9 +960,9 @@ function readDnsMap(logFile) {
 }
 
 /// Stop the DNS forwarder and restore the original resolver config.
-function stopDnsCapture(dns) {
+function stopDnsCapture(dns, token) {
   if (!dns || !dns.active) return;
-  killDnsForwarder(dns.pid);
+  killDnsForwarder(dns.pid, token);
   try {
     if (dns.backup) sudo(["cp", dns.backup, "/etc/resolv.conf"]);
   } catch {
@@ -795,15 +990,15 @@ function stopDnsCapture(dns) {
 // Kill the eBPF agent by NAME (needs no state). Bracket the first char so pkill
 // doesn't match its own command line and race-kill its sudo parent, leaving the
 // root agent alive.
-function killEbpfByName() {
+function killEbpfByName(token) {
   try {
-    sudo(["pkill", "-9", "-f", "[l]egionr-bpf"]);
+    sudo(["pkill", "-9", "-f", warden.daemonPattern("legionr-bpf", token)]);
   } catch {
     /* nothing to kill / pkill absent */
   }
 }
 
-function stopEbpf(cap) {
+function stopEbpf(cap, token) {
   if (!cap || !cap.active) return;
   if (cap.pid) {
     try {
@@ -812,7 +1007,7 @@ function stopEbpf(cap) {
       /* fall through to pkill */
     }
   }
-  killEbpfByName();
+  killEbpfByName(token);
 }
 
 // ── main ────────────────────────────────────────────────────────────────────
@@ -847,6 +1042,13 @@ async function main() {
     return;
   }
 
+  RUN_TOKEN = crypto.randomBytes(8).toString("hex");
+  if (setupEvidence()) {
+    info("   evidence: root-only (/run/legion); job steps cannot edit the record");
+  } else {
+    warn("no root or sudo: evidence stays in the temp dir, where job steps can edit it");
+  }
+
   // Allowlist = GitHub endpoints + inline input + committed file + the baseline
   // the action learned on previous runs (restored from the Actions cache). The
   // cache is what makes audit→block self-contained: no file or workflow needed.
@@ -877,15 +1079,15 @@ async function main() {
   }
   const { ipToHost, v4, v6 } = await resolveAll(hosts);
 
-  const logFile = path.join(os.tmpdir(), "legion-egress.log");
-  fs.writeFileSync(logFile, "");
+  const logFile = evidencePath("egress.log");
+  writeEvidence(logFile, "");
   const pid = startMonitor(logFile, interval);
 
   // Preferred capture: eBPF (socket-layer, bypass-proof, with process names).
   // The /proc sampler above stays as a fallback when eBPF is unavailable.
   let ebpfCap = { active: false, log: "" };
   if (input("ebpf", "auto").toLowerCase() !== "off") {
-    const bin = await ebpf.ensureBinary(); // local, else best-effort download
+    const bin = await ebpf.ensureBinary({ install: EVIDENCE.protected ? installAgent : undefined });
     if (!bin) {
       // Say WHY the agent isn't available, so a silent sampler fallback is
       // diagnosable instead of looking like "eBPF just doesn't work".
@@ -897,10 +1099,10 @@ async function main() {
         );
       else
         warn(
-          "eBPF unavailable: could not fetch/verify legionr-bpf from the latest release — check that the binary is attached to the latest release; using the /proc sampler",
+          `eBPF unavailable: could not fetch legionr-bpf ${require("./agents.js").PIN.release} matching the SHA-256 pinned in action/agents.json; using the /proc sampler`,
         );
     }
-    ebpfCap = await startEbpf(path.join(os.tmpdir(), "legion-connect.log"), bin);
+    ebpfCap = await startEbpf(evidencePath("connect.log"), bin);
   }
 
   // File-integrity baseline: the Rust legionr-fim agent snapshots the high-value
@@ -909,7 +1111,7 @@ async function main() {
   // chmod'd during the job. Skips silently if the agent binary isn't available.
   let fimState = null;
   if (input("file-integrity", "auto").toLowerCase() !== "off") {
-    const bin = await fim.ensureBinary();
+    const bin = await fim.ensureBinary({ install: EVIDENCE.protected ? installAgent : undefined });
     if (!bin) {
       info("   file-integrity: legionr-fim agent unavailable; skipping");
     } else {
@@ -918,8 +1120,10 @@ async function main() {
           .map((e) => e.host)
           .filter(Boolean);
         const t0 = Date.now();
-        const c = fim.runSnapshot(bin, FIM_SNAP_FILE, workspace, extraPaths);
-        fimState = { bin, snap: FIM_SNAP_FILE };
+        const snap = evidencePath("fim-before.json");
+        const prefix = EVIDENCE.protected && !IS_ROOT ? ["sudo", "-n"] : [];
+        const c = fim.runSnapshot(bin, snap, workspace, extraPaths, prefix);
+        fimState = { bin, snap, root: EVIDENCE.protected };
         info(
           `   file-integrity baseline: ${c.sensitive || 0} sensitive + ` +
             `${c.source || 0} source file(s) (${Date.now() - t0}ms) [legionr-fim]`,
@@ -931,11 +1135,17 @@ async function main() {
   }
 
   let enforced = false;
+  let fwPlan = null;
   if (block) {
     try {
-      applyEgressBlock(v4, v6);
+      fwPlan = applyEgressBlock(v4, v6);
       enforced = true;
       info(`   enforced default-deny egress (seeded ${v4.length + v6.length} allowlisted IPs)`);
+      info(
+        fwPlan.extIface
+          ? `   containers filtered too (forwarded traffic leaving ${fwPlan.extIface})`
+          : "   no default route found: forwarded (container) traffic is not filtered",
+      );
     } catch (e) {
       // Roll back any partially-applied rules so a half-built default-deny chain
       // isn't left jumped from OUTPUT (which would drop the runner's own egress
@@ -955,9 +1165,13 @@ async function main() {
     dnsCap = await startDnsCapture({ enforce: block && enforced, domains: hosts });
   }
 
-  // Persist everything post() needs.
-  fs.writeFileSync(
-    STATE_FILE,
+  // The warden tears everything down when this job's Runner.Worker exits, even
+  // if the post step is skipped or can no longer use sudo.
+  const wardenOn = (block || boolInput("disable-sudo", false)) && startWarden();
+
+  // Persist everything post() needs (root-only when protected).
+  writeEvidence(
+    stateFile(),
     JSON.stringify({
       policy,
       enforced,
@@ -974,19 +1188,44 @@ async function main() {
       learn,
       useLearned,
       jobSummary,
+      evidenceProtected: EVIDENCE.protected,
+      runToken: RUN_TOKEN,
+      warden: !!wardenOn,
+      firewall: fwPlan ? { extIface: fwPlan.extIface } : null,
+      sudo: "kept",
       startedAt: new Date().toISOString(),
     }),
   );
   saveState("isPost", "true");
 
+  let sudoState = "kept";
   if (boolInput("disable-sudo", false)) {
-    try {
-      disableSudo();
-      info("   sudo revoked for the runner user");
-    } catch (e) {
-      warn(`could not disable sudo: ${e.message}`);
+    if (!wardenOn) {
+      sudoState = "not revoked: no warden could be started to tear down at job end";
+      warn(`disable-sudo ${sudoState}`);
+    } else {
+      try {
+        const reads = ["state.json", "egress.log", "connect.log", "dns.log", "dns-refused.log"].map((f) =>
+          path.join(EVIDENCE.dir, f),
+        );
+        const extra = [`${DMESG} ""`];
+        // Only a FIM binary in the root-only dir may be granted; any other
+        // (from PATH or a job-set variable) would be a path to root.
+        if (fimState && fimState.bin.startsWith(`${EVIDENCE_DIR}/bin/`)) {
+          extra.push(`${fimState.bin} diff ${fimState.snap}`);
+        }
+        sudoState = disableSudo(reads, extra);
+        if (sudoState === "verified") info("   sudo revoked for the job user (verified: sudo -n true now fails)");
+        else warn(`disable-sudo: ${sudoState}`);
+      } catch (e) {
+        sudoState = `failed: ${e.message}`;
+        warn(`could not disable sudo: ${e.message}`);
+      }
     }
+  } else if (block) {
+    info("   note: job steps keep sudo, so a step could undo block mode; the post step reports it if one does");
   }
+  saveState("sudo", sudoState);
 
   await emit(link, {
     runner: process.env.RUNNER_NAME || "github-hosted",
@@ -1003,7 +1242,14 @@ async function main() {
 async function post() {
   let st;
   try {
-    st = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
+    // Root-only state first; the temp-dir copy only exists without privilege.
+    EVIDENCE = { dir: EVIDENCE_DIR, protected: true };
+    let raw = readEvidence(path.join(EVIDENCE_DIR, "state.json"));
+    if (!raw) {
+      EVIDENCE = { dir: os.tmpdir(), protected: false };
+      raw = fs.readFileSync(TMP_STATE_FILE, "utf8");
+    }
+    st = JSON.parse(raw);
   } catch {
     // No parseable state: main() may have died mid-setup, or an untrusted job
     // deleted/corrupted the (job-writable, /tmp) state file. We can't do a
@@ -1017,21 +1263,27 @@ async function post() {
     return;
   }
 
-  // Stop the background daemons. The monitor is a pure /proc reader (no
-  // subprocess), so SIGTERM reaps it instantly; stopDnsCapture/stopEbpf kill the
-  // privileged forwarder/agent by name. Nothing is left to orphan the runner.
-  try {
-    process.kill(st.pid, "SIGTERM");
-  } catch {
-    /* already gone */
-  }
-  stopDnsCapture(st.dns);
-  stopEbpf(st.ebpf);
+  // Before touching anything: were Legion's own controls changed mid-job?
+  const sudoOk = canSudo();
+  const tamper = sudoOk ? observeTamper(st) : daemonTamperOnly(st);
+  for (const t of tamper) warn(`Legion controls changed during the job: ${t}`);
 
-  // Remove the block-mode firewall NOW, before the runner finalizes — otherwise
-  // its default-deny drops the runner's own completion call and the job hangs.
-  // The denied list below reads the kernel log, which persists past chain removal.
-  if (st.enforced) removeEgressBlock();
+  // Stop the daemons and remove the firewall NOW, before the runner finalizes,
+  // or the default-deny drops the runner's own completion call. Without sudo
+  // (disable-sudo) the warden does all of this when Runner.Worker exits.
+  if (sudoOk) {
+    try {
+      if (st.evidenceProtected) sudo(["pkill", "-f", warden.daemonPattern("monitor.js", st.runToken)]);
+      else process.kill(st.pid, "SIGTERM");
+    } catch {
+      /* already gone */
+    }
+    stopDnsCapture(st.dns, st.runToken);
+    stopEbpf(st.ebpf, st.runToken);
+    if (st.enforced) removeEgressBlock();
+  } else if (st.warden) {
+    info("Legion Runner: sudo is revoked; the warden removes the firewall when the job ends.");
+  }
 
   // Tally observed peers as ip|port. Prefer the eBPF connect log (reliable +
   // process names); fall back to the /proc sampler. procMap: ip -> Set(comm).
@@ -1040,7 +1292,7 @@ async function post() {
   let usedEbpf = false;
   if (st.ebpf && st.ebpf.active) {
     try {
-      for (const line of fs.readFileSync(st.ebpf.log, "utf8").split("\n")) {
+      for (const line of readEvidence(st.ebpf.log).split("\n")) {
         const c = ebpf.parseConnect(line);
         if (!c) continue;
         const ip = normalizeIp(c.ip);
@@ -1056,7 +1308,7 @@ async function post() {
   }
   if (!usedEbpf) {
     try {
-      for (const line of fs.readFileSync(st.logFile, "utf8").split("\n")) {
+      for (const line of readEvidence(st.logFile).split("\n")) {
         const peer = line.trim();
         if (!peer.includes(":")) continue;
         const parsed = splitPeer(peer);
@@ -1073,7 +1325,7 @@ async function post() {
   //   1. DNS capture — the exact domains the job resolved (most accurate)
   //   2. forward allowlist map (GitHub/operator endpoints)
   //   3. reverse DNS (PTR) for anything still unnamed
-  const dnsMap = st.dns && st.dns.log ? readDnsMap(st.dns.log) : {};
+  const dnsMap = st.dns && st.dns.log ? readDnsMap(st.dns.log, readEvidence) : {};
   const uniqueIps = [...new Set([...counts.keys()].map((k) => k.split("|")[0]))];
   const hostMap = { ...(st.ipToHost || {}), ...dnsMap };
   await Promise.all(
@@ -1237,11 +1489,27 @@ async function post() {
     }
   }
 
+  // DNS lookups the forwarder refused (names outside the allowlist).
+  if (st.dns && st.dns.refusedLog) {
+    const refused = [...new Set(readEvidence(st.dns.refusedLog).split("\n").map((s) => s.trim()).filter(Boolean))];
+    if (refused.length) {
+      info(`Legion Runner: ${refused.length} DNS lookup(s) refused: ${refused.slice(0, 20).join(", ")}`);
+      md += "\n### 🚫 Refused DNS lookups\n";
+      md += "| Name |\n|---|\n";
+      for (const n of refused.slice(0, 50)) md += `| \`${n}\` |\n`;
+      md += `\n_${refused.length} name(s) outside the allowlist were refused before any lookup left the runner._\n`;
+    }
+  }
+
+  // Integrity of Legion itself, and whether job steps could undo it.
+  md += renderIntegrity(st, tamper, getStateValue("sudo") || st.sudo);
+
   // File integrity: diff the tamper targets against the job-start baseline (via
   // the Rust legionr-fim agent) and surface anything that changed mid-run.
   if (st.fim && st.fim.bin && st.fim.snap) {
     try {
-      const changes = fim.runDiff(st.fim.bin, st.fim.snap);
+      const prefix = st.fim.root && !IS_ROOT ? ["sudo", "-n"] : [];
+      const changes = fim.runDiff(st.fim.bin, st.fim.snap, prefix);
       md += fim.renderChanges(changes);
       if (changes.length) {
         info(`Legion Runner: ${changes.length} file-integrity change(s) detected.`);
@@ -1361,6 +1629,75 @@ async function reverseLookup(ip) {
   }
 }
 
+// ── Integrity of Legion's own controls ─────────────────────────────────────
+function pgrepAlive(pattern) {
+  try {
+    execFileSync("pgrep", ["-f", pattern], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/// What the end of the job shows about Legion's controls (needs sudo).
+function observeTamper(st) {
+  let outputJump = false;
+  try {
+    sudo(["iptables", "-C", "OUTPUT", "-j", firewall.EGRESS_CHAIN]);
+    outputJump = true;
+  } catch {
+    /* missing */
+  }
+  return firewall.assessTamper({
+    enforced: !!st.enforced,
+    outputJump,
+    egressRules: sudoOut(["iptables", "-S", firewall.EGRESS_CHAIN]),
+    expectFwd: !!(st.firewall && st.firewall.extIface),
+    fwdRules: sudoOut(["iptables", "-S", firewall.FWD_CHAIN]),
+    expectDnsRedirect: !!(st.dns && st.dns.redirect),
+    dnsRedirect: sudoOut(["iptables", "-t", "nat", "-S", firewall.DNS_CHAIN]).includes("REDIRECT"),
+    expectForwarder: !!(st.dns && st.dns.active),
+    forwarderAlive: pgrepAlive(warden.daemonPattern("dnscap.js", st.runToken)),
+    expectAgent: !!(st.ebpf && st.ebpf.active),
+    agentAlive: pgrepAlive(warden.daemonPattern("legionr-bpf", st.runToken)),
+  });
+}
+
+/// Without sudo only the daemons can be checked (the firewall is root-only).
+function daemonTamperOnly(st) {
+  return firewall.assessTamper({
+    enforced: false,
+    expectForwarder: !!(st.dns && st.dns.active),
+    forwarderAlive: pgrepAlive(warden.daemonPattern("dnscap.js", st.runToken)),
+    expectAgent: !!(st.ebpf && st.ebpf.active),
+    agentAlive: pgrepAlive(warden.daemonPattern("legionr-bpf", st.runToken)),
+  });
+}
+
+function getStateValue(name) {
+  return process.env[`STATE_${name}`] || "";
+}
+
+/// Pure: the summary section on Legion's own integrity.
+function renderIntegrity(st, tamper, sudoState) {
+  let md = "\n### 🧷 Legion integrity\n";
+  if (tamper.length) {
+    md += "**⚠ Legion's controls were changed during the job:**\n";
+    for (const t of tamper) md += `- ${t}\n`;
+    md += "\n_Treat this run's egress record as unreliable._\n";
+  } else {
+    md += "_Firewall, forwarder and agent were intact at the end of the job._\n";
+  }
+  md += `\n- Evidence: ${st.evidenceProtected ? "root-only (/run/legion)" : "temp dir, editable by job steps (no privilege)"}\n`;
+  if (st.policy === "block") {
+    if (sudoState === "verified") md += "- sudo: revoked for job steps, so no step could undo block mode\n";
+    else if (!sudoState || sudoState === "kept")
+      md += "- sudo: available to job steps, so a step could undo block mode (set `disable-sudo: true` to prevent it)\n";
+    else md += `- sudo: ${sudoState}\n`;
+  }
+  return md;
+}
+
 // ── entrypoint: detect main vs post via saved state ─────────────────────────
 // Only runs when executed as a script; `require()` (tests) is side-effect free.
 if (require.main === module) {
@@ -1369,7 +1706,18 @@ if (require.main === module) {
       if (process.env.STATE_isPost === "true") await post();
       else await main();
     } catch (e) {
-      warn(`Legion Runner error: ${e.stack || e}`);
+      // In block mode a setup error must stop the job: carrying on would run
+      // every later step with no enforcement while the job looks protected.
+      if (process.env.STATE_isPost !== "true" && input("egress-policy", "audit").toLowerCase() === "block") {
+        try {
+          removeEgressBlock();
+        } catch {
+          /* nothing to undo */
+        }
+        setFailed(`Legion Runner: block mode could not be set up, stopping the job: ${e.stack || e}`);
+      } else {
+        warn(`Legion Runner error: ${e.stack || e}`);
+      }
     }
   })();
 }
@@ -1390,4 +1738,7 @@ module.exports = {
   egressUnblockRules,
   readDnsMap,
   realUpstream,
+  sudoersRule,
+  renderIntegrity,
+  defaultIfaceFromRoute,
 };
