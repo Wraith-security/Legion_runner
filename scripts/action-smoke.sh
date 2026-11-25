@@ -80,6 +80,13 @@ for _ in range(50):
 sys.exit(1)
 PY
 
+# Leftovers under the action's old fixed /tmp names, owned by someone else, as
+# an earlier step or another user leaves them on a real runner. The action must
+# not depend on writing any fixed path in the shared /tmp.
+for f in resolv.legion nsswitch.legion legion-resolved.conf legion-no-sudo; do
+    rm -rf "/tmp/$f"; printf 'planted\n' > "/tmp/$f"; chmod 0600 "/tmp/$f"
+done
+
 # The job user must be able to read the action (a CI checkout under
 # /home/runner is not readable by other users), so run a copy.
 mkdir -p "$W/repo"

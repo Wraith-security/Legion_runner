@@ -104,6 +104,15 @@ function setupEvidence() {
   return EVIDENCE.protected;
 }
 
+/// A path in this run's private 0700 temp directory. Fixed names in the shared
+/// /tmp collide with files another user (or an earlier step) left there, and a
+/// predictable name is a place to plant content that root later copies.
+let _privTmp = null;
+function privateTmp(name) {
+  if (!_privTmp) _privTmp = fs.mkdtempSync(path.join(os.tmpdir(), "legion-run-"));
+  return path.join(_privTmp, name);
+}
+
 /// Install `data` as `dest` owned by root with `mode`. The bytes go through a
 /// private temp file: sudo cannot be fed stdin here, because Ubuntu's sudoers
 /// sets `use_pty`, which puts a pty in front of it (/dev/stdin then fails).
@@ -653,7 +662,7 @@ function disableSudo(readFiles, extraCommands) {
   }
   if (IS_ROOT) return "the job runs as root; there is no sudo to revoke";
   const rule = sudoersRule(user, readFiles, extraCommands);
-  const tmp = path.join(os.tmpdir(), "legion-no-sudo");
+  const tmp = privateTmp("legion-no-sudo");
   fs.writeFileSync(tmp, rule);
   sudo(["visudo", "-cf", tmp]); // a broken sudoers file would lock out everyone
   sudo(["install", "-m", "0440", "-o", "root", "-g", "root", tmp, warden.SUDOERS_FILE]);
@@ -734,7 +743,7 @@ function redirectSystemdResolved(out, upstream) {
     if (!upstream || upstream.startsWith("127.") || upstream === "::1") return; // would loop
     const dir = "/etc/systemd/resolved.conf.d";
     const dropin = path.join(dir, "legion.conf");
-    const tmp = path.join(os.tmpdir(), "legion-resolved.conf");
+    const tmp = privateTmp("legion-resolved.conf");
     fs.writeFileSync(tmp, "[Resolve]\nDNS=127.0.0.1\nDomains=~.\n");
     sudo(["mkdir", "-p", dir]);
     sudo(["cp", tmp, dropin]);
@@ -806,7 +815,7 @@ async function rerouteNsswitch(out) {
     out.nsswitchTried = true; // a getaddrinfo bypass exists; record we tried
     const backup = evidencePath("nsswitch.conf.bak");
     sudo(["cp", "/etc/nsswitch.conf", backup]);
-    const tmp = path.join(os.tmpdir(), "nsswitch.legion");
+    const tmp = privateTmp("nsswitch.legion");
     fs.writeFileSync(tmp, nss.replace(/^hosts:.*$/m, "hosts: files myhostname dns"));
     sudo(["cp", tmp, "/etc/nsswitch.conf"]);
     if (await resolvesViaGetaddrinfo()) {
@@ -864,7 +873,7 @@ async function startDnsCapture(opts = {}) {
       throw new Error("local resolver not answering");
     }
     sudo(["cp", "/etc/resolv.conf", out.backup]);
-    const tmp = path.join(os.tmpdir(), "resolv.legion");
+    const tmp = privateTmp("resolv.legion");
     fs.writeFileSync(tmp, "nameserver 127.0.0.1\noptions timeout:2 attempts:2\n");
     sudo(["cp", tmp, "/etc/resolv.conf"]);
     out.active = true;

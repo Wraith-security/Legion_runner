@@ -184,6 +184,10 @@ jobs:
         # (LLVM 23 via llvm-sys 231), which the runner does not have; the prebuilt
         # binary ships its own. --disable-strategies compile makes a missing
         # prebuilt fail loudly instead of falling back to the broken source build.
+        # Authenticated, so GitHub's API does not rate-limit the release lookup
+        # (anonymous calls from runner IPs got HTTP 403 and failed the job).
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: cargo binstall --no-confirm --disable-strategies compile bpf-linker
       - name: Build agent (release)
         run: cargo build --release
