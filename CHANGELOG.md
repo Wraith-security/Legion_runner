@@ -11,6 +11,23 @@ Unreleased section.
 
 ## [Unreleased]
 
+### Fixed
+- **Block mode answers the CNAME targets of an allowed name.** v1.2.0 refused
+  every name off the allowlist, including the CDN name an allowed host points
+  to (`static.rust-lang.org` is a CNAME for
+  `dualstack.k.sni.global.fastly.net`). A client that looked the target up by
+  itself got REFUSED, and the v1.2.1 release lost its `legionr-bpf` build when
+  rustup could not download. The forwarder now learns the CNAME chain from
+  upstream's answer to an allowed name and answers those targets, with that
+  name's ports. Siblings of a target stay refused.
+- **The release uses this commit's action**, not the last published one, as CI
+  already does, so a fix to the action reaches the release that ships it.
+- **Docs: container DNS** goes through the forwarder with `dns-capture`, and is
+  filtered the same as the host's. The README and docs/egress.md said it was
+  not.
+
+## [1.2.1] - 2026-11-25
+
 ### Changed (docs and release)
 - **Docs match the code.** The README no longer calls the eBPF agent
   "socket-layer" or "bypass-proof": it traces `connect`, `sendto` and

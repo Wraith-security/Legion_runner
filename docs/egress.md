@@ -56,9 +56,9 @@ address, the more open entry wins for that address.
 
 | Where | Who may send DNS off the runner | Names filtered |
 |-------|--------------------------------|----------------|
-| Action, block mode, `dns-capture: true` | Only root (the forwarder) and systemd-resolved. Every other query on the host is redirected to the forwarder. | Yes: names off the allowlist are answered REFUSED and never leave the runner. |
+| Action, block mode, `dns-capture: true` | Only root (the forwarder) and systemd-resolved. Every other query on the host is redirected to the forwarder. | Yes: names off the allowlist are answered REFUSED and never leave the runner. The CNAME targets of an allowed name are allowed too, once upstream has named them in an answer. |
 | Action, block mode, `dns-capture: false` | Root and systemd-resolved, to any server. Job processes use the local stub. | No. |
-| Action, containers | Any container, but always to the runner's real resolver, whatever server it asks. | No. |
+| Action, containers | Any container, but always to the forwarder on the Docker bridge (with `dns-capture`) or to the runner's real resolver (without it), whatever server it asks. | With `dns-capture`, yes, the same as the host. Without it, no. |
 | Self-hosted (`legionr harden`) | Anything, but only to the host's configured resolvers. | No. Filtering names needs a filtering resolver. |
 
 "Names not filtered" means a step can still encode data in lookups sent to the
