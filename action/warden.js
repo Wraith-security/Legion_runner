@@ -33,6 +33,18 @@ const list = (bin, chain) => {
   }
 };
 
+const TOKEN_RE = /^[0-9a-f]{16}$/;
+
+/// Pure: the pgrep/pkill pattern for one of this run's daemons. Each daemon is
+/// started with `legion-run=<token>` on its command line, so teardown kills
+/// only this job's processes, never another Legion job's on the same host.
+/// The bracketed first letter keeps the pattern from matching pkill itself.
+/// Without a valid token (no state), it falls back to the name alone.
+function daemonPattern(name, token) {
+  const bracketed = `[${name[0]}]${name.slice(1).replace(/\./g, "\\.")}`;
+  return typeof token === "string" && TOKEN_RE.test(token) ? `${bracketed}.*legion-run=${token}` : bracketed;
+}
+
 /// Pure: is `pid` alive according to /proc? (injectable for tests)
 function alive(pid, exists = fs.existsSync) {
   return Number.isInteger(pid) && pid > 1 && exists(`/proc/${pid}`);
@@ -42,18 +54,18 @@ function alive(pid, exists = fs.existsSync) {
 /// best-effort so one failure cannot leave the rest in place.
 function teardown(dir) {
   firewall.removeAll(exec, list);
-  for (const pattern of ["[d]nscap.js", "[l]egionr-bpf", "[m]onitor.js"]) {
-    try {
-      exec(["pkill", "-9", "-f", pattern]);
-    } catch {
-      /* nothing to kill */
-    }
-  }
   let st = {};
   try {
     st = JSON.parse(fs.readFileSync(path.join(dir, "state.json"), "utf8"));
   } catch {
-    /* no state: the firewall and daemons above are keyed by name */
+    /* no state: fall back to killing the daemons by name */
+  }
+  for (const name of ["dnscap.js", "legionr-bpf", "monitor.js"]) {
+    try {
+      exec(["pkill", "-9", "-f", daemonPattern(name, st.runToken)]);
+    } catch {
+      /* nothing to kill */
+    }
   }
   const dns = st.dns || {};
   const inDir = (p) => typeof p === "string" && path.dirname(p) === dir;
@@ -104,4 +116,4 @@ if (require.main === module) {
   );
 }
 
-module.exports = { alive, teardown, SUDOERS_FILE };
+module.exports = { alive, teardown, daemonPattern, SUDOERS_FILE };

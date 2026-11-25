@@ -75,7 +75,11 @@ else
         # Read the whole response, then match in bash. Piping curl into
         # `grep -m1` closed the pipe early, curl exited 23 and, under pipefail,
         # took the install down with it.
-        latest_json="$(curl -fsSL https://api.github.com/repos/actions/runner/releases/latest)"
+        # Authenticated when a token is available (CI passes the job token):
+        # anonymous API calls from shared runner IPs get rate-limited (403).
+        auth=()
+        [ -n "${GITHUB_TOKEN:-}" ] && auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+        latest_json="$(curl -fsSL "${auth[@]}" https://api.github.com/repos/actions/runner/releases/latest)"
         if [[ "$latest_json" =~ \"tag_name\":[[:space:]]*\"v([^\"]+)\" ]]; then
             RUNNER_VERSION="${BASH_REMATCH[1]}"
         fi

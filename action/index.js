@@ -20,6 +20,12 @@ const cache = require("./cache.js");
 const ebpf = require("./ebpf.js");
 const firewall = require("./firewall.js");
 const warden = require("./warden.js");
+const crypto = require("node:crypto");
+
+// Tags this run's daemons (see warden.daemonPattern) so teardown never kills
+// another Legion job's forwarder or agent on a shared host.
+let RUN_TOKEN = "";
+const runTag = () => `legion-run=${RUN_TOKEN}`;
 const fim = require("./fim.js");
 const repos = require("./repos.js");
 
@@ -414,7 +420,7 @@ async function startEbpf(connectLog, bin) {
     // so the job cannot rewrite the connection record. stderr is kept: loading
     // eBPF can fail for real reasons (no BTF, no CAP_BPF, old kernel) and the
     // agent prints why.
-    const child = spawnPrivileged("/bin/sh", ["-c", 'exec "$0" >>"$1" 2>>"$2"', bin, connectLog, errLog], {
+    const child = spawnPrivileged("/bin/sh", ["-c", 'exec "$0" "$3" >>"$1" 2>>"$2"', bin, connectLog, errLog, runTag()], {
       detached: true,
       stdio: "ignore",
     });
@@ -450,7 +456,7 @@ function startMonitor(logFile, intervalSec) {
   // Detached Node sampler (action/monitor.js): prefers `ss`, falls back to
   // /proc/net so it needs no iproute2. Outlives main() to watch the whole job.
   const monitor = path.join(__dirname, "monitor.js");
-  const argv = [monitor, logFile, String(intervalSec)];
+  const argv = [monitor, logFile, String(intervalSec), runTag()];
   const opts = { detached: true, stdio: "ignore" };
   // Root writes the sample log inside the root-only evidence dir.
   const child = EVIDENCE.protected ? spawnPrivileged(process.execPath, argv, opts) : spawn(process.execPath, argv, opts);
@@ -859,6 +865,7 @@ async function startDnsCapture(opts = {}) {
       opts.enforce ? "1" : "0",
       (opts.domains || []).join(","),
       out.refusedLog,
+      runTag(),
     ];
     // Bind :53 requires privilege → root directly, else sudo. Detached.
     const child = spawnPrivileged(process.execPath, argv, {
@@ -906,14 +913,14 @@ async function startDnsCapture(opts = {}) {
     }
   } catch (e) {
     warn(`DNS capture unavailable (${e.message}); falling back to reverse DNS`);
-    killDnsForwarder(out.pid);
+    killDnsForwarder(out.pid, RUN_TOKEN);
     out.active = false;
   }
   return out;
 }
 
 /// Kill the DNS forwarder by pid (preferred), then by name as a fallback.
-function killDnsForwarder(pid) {
+function killDnsForwarder(pid, token) {
   // pid is the (sudo) launcher; signalling it may not reach the root forwarder,
   // so ALWAYS also pkill by name (no early return). A leaked root forwarder
   // keeps the hosted runner from finalizing the job ("Complete job" hangs).
@@ -929,7 +936,7 @@ function killDnsForwarder(pid) {
     // doesn't match the pattern — otherwise pkill races to kill its own sudo
     // parent and can leave the root forwarder alive, hanging the runner. -9 to
     // be sure (resolv.conf/nsswitch are restored separately).
-    sudo(["pkill", "-9", "-f", "[d]nscap.js"]);
+    sudo(["pkill", "-9", "-f", warden.daemonPattern("dnscap.js", token)]);
   } catch {
     /* nothing to kill / pkill absent */
   }
@@ -953,9 +960,9 @@ function readDnsMap(logFile, reader = (f) => fs.readFileSync(f, "utf8")) {
 }
 
 /// Stop the DNS forwarder and restore the original resolver config.
-function stopDnsCapture(dns) {
+function stopDnsCapture(dns, token) {
   if (!dns || !dns.active) return;
-  killDnsForwarder(dns.pid);
+  killDnsForwarder(dns.pid, token);
   try {
     if (dns.backup) sudo(["cp", dns.backup, "/etc/resolv.conf"]);
   } catch {
@@ -983,15 +990,15 @@ function stopDnsCapture(dns) {
 // Kill the eBPF agent by NAME (needs no state). Bracket the first char so pkill
 // doesn't match its own command line and race-kill its sudo parent, leaving the
 // root agent alive.
-function killEbpfByName() {
+function killEbpfByName(token) {
   try {
-    sudo(["pkill", "-9", "-f", "[l]egionr-bpf"]);
+    sudo(["pkill", "-9", "-f", warden.daemonPattern("legionr-bpf", token)]);
   } catch {
     /* nothing to kill / pkill absent */
   }
 }
 
-function stopEbpf(cap) {
+function stopEbpf(cap, token) {
   if (!cap || !cap.active) return;
   if (cap.pid) {
     try {
@@ -1000,7 +1007,7 @@ function stopEbpf(cap) {
       /* fall through to pkill */
     }
   }
-  killEbpfByName();
+  killEbpfByName(token);
 }
 
 // ── main ────────────────────────────────────────────────────────────────────
@@ -1035,6 +1042,7 @@ async function main() {
     return;
   }
 
+  RUN_TOKEN = crypto.randomBytes(8).toString("hex");
   if (setupEvidence()) {
     info("   evidence: root-only (/run/legion); job steps cannot edit the record");
   } else {
@@ -1181,6 +1189,7 @@ async function main() {
       useLearned,
       jobSummary,
       evidenceProtected: EVIDENCE.protected,
+      runToken: RUN_TOKEN,
       warden: !!wardenOn,
       firewall: fwPlan ? { extIface: fwPlan.extIface } : null,
       sudo: "kept",
@@ -1264,13 +1273,13 @@ async function post() {
   // (disable-sudo) the warden does all of this when Runner.Worker exits.
   if (sudoOk) {
     try {
-      if (st.evidenceProtected) sudo(["pkill", "-f", "[m]onitor.js"]);
+      if (st.evidenceProtected) sudo(["pkill", "-f", warden.daemonPattern("monitor.js", st.runToken)]);
       else process.kill(st.pid, "SIGTERM");
     } catch {
       /* already gone */
     }
-    stopDnsCapture(st.dns);
-    stopEbpf(st.ebpf);
+    stopDnsCapture(st.dns, st.runToken);
+    stopEbpf(st.ebpf, st.runToken);
     if (st.enforced) removeEgressBlock();
   } else if (st.warden) {
     info("Legion Runner: sudo is revoked; the warden removes the firewall when the job ends.");
@@ -1648,9 +1657,9 @@ function observeTamper(st) {
     expectDnsRedirect: !!(st.dns && st.dns.redirect),
     dnsRedirect: sudoOut(["iptables", "-t", "nat", "-S", firewall.DNS_CHAIN]).includes("REDIRECT"),
     expectForwarder: !!(st.dns && st.dns.active),
-    forwarderAlive: pgrepAlive("[d]nscap.js"),
+    forwarderAlive: pgrepAlive(warden.daemonPattern("dnscap.js", st.runToken)),
     expectAgent: !!(st.ebpf && st.ebpf.active),
-    agentAlive: pgrepAlive("[l]egionr-bpf"),
+    agentAlive: pgrepAlive(warden.daemonPattern("legionr-bpf", st.runToken)),
   });
 }
 
@@ -1659,9 +1668,9 @@ function daemonTamperOnly(st) {
   return firewall.assessTamper({
     enforced: false,
     expectForwarder: !!(st.dns && st.dns.active),
-    forwarderAlive: pgrepAlive("[d]nscap.js"),
+    forwarderAlive: pgrepAlive(warden.daemonPattern("dnscap.js", st.runToken)),
     expectAgent: !!(st.ebpf && st.ebpf.active),
-    agentAlive: pgrepAlive("[l]egionr-bpf"),
+    agentAlive: pgrepAlive(warden.daemonPattern("legionr-bpf", st.runToken)),
   });
 }
 
