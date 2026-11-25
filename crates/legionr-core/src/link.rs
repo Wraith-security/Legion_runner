@@ -117,14 +117,36 @@ impl LegionLink {
     }
 }
 
-/// Current time as an RFC3339 string.
+/// Current time as an RFC3339 string, in UTC (e.g. `2026-11-25T10:00:00.123456789Z`).
 fn now_rfc3339() -> String {
-    chrono::Utc::now().to_rfc3339()
+    // Formatting a UTC OffsetDateTime as RFC3339 cannot fail (the year is
+    // always within 0..=9999 for a real clock); fall back to the epoch rather
+    // than panic inside the event path if it ever does.
+    time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn now_rfc3339_is_utc_rfc3339() {
+        let s = now_rfc3339();
+        let parsed =
+            time::OffsetDateTime::parse(&s, &time::format_description::well_known::Rfc3339)
+                .expect("timestamp must parse as RFC3339");
+        assert_eq!(
+            parsed.offset(),
+            time::UtcOffset::UTC,
+            "timestamp must be UTC: {s}"
+        );
+        assert!(
+            parsed.year() >= 2024,
+            "timestamp must come from the real clock: {s}"
+        );
+    }
 
     #[test]
     fn empty_base_disables_link() {
