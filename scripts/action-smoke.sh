@@ -63,6 +63,13 @@ PY
 UPSTREAM=$!
 sleep 0.5
 
+# The job user must be able to read the action (a CI checkout under
+# /home/runner is not readable by other users), so run a copy.
+mkdir -p "$W/repo"
+cp -a "$ROOT/action" "$W/repo/action"
+[ -d "$ROOT/.legion" ] && cp -a "$ROOT/.legion" "$W/repo/.legion"
+ROOT="$W/repo"
+
 # A parent named Runner.Worker, so the action finds it and starts the warden.
 cp /bin/bash "$W/Runner.Worker"
 cat > "$W/job.sh" <<JOB
