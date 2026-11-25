@@ -84,8 +84,7 @@ build_bin() {
 
 # Write a config pointing at the throwaway prefix so we never touch a real host.
 provision_config() {
-    local extra=("$@")
-    "$BIN" --config "$CFG" provision "$SCOPE" --container none --no-probe "${extra[@]}"
+    "$BIN" --config "$CFG" provision "$SCOPE" --container none --no-probe
     # Repoint the runner/work dirs at the scratch prefix (the defaults live under
     # the service user's home, which does not exist in CI).
     local tmp="${PREFIX}/config.edit.json"
@@ -171,10 +170,11 @@ have_systemd() { [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2
 # unit's own [Service] section (ExecStart swapped, oneshot) when systemd is
 # PID 1; otherwise setpriv with the same user, capabilities and no_new_privs.
 as_unit() {
+    local limit="${AS_UNIT_TIMEOUT:-0}"
     if have_systemd; then
         local unit="legionr-e2e-check@.service"
         $SUDO sh -c "sed -e 's|^ExecStart=.*|ExecStart=/usr/local/bin/legionr --config /etc/legion-runner/%i.json $*|' \
-            -e 's|^Type=.*|Type=oneshot|' -e 's|^Restart=.*|Restart=no|' \
+            -e 's|^Type=.*|Type=oneshot\\nTimeoutStartSec=${limit}|' -e 's|^Restart=.*|Restart=no|' \
             -e '/^StartLimit/d' /etc/systemd/system/legionr@.service > /etc/systemd/system/${unit}"
         $SUDO systemctl daemon-reload
         $SUDO systemctl reset-failed "legionr-e2e-check@${ISO_INSTANCE}" 2>/dev/null || true
@@ -185,7 +185,7 @@ as_unit() {
         return "$rc"
     else
         $SUDO env RUST_BACKTRACE=0 sh -c "set -a; . /etc/legion-runner/${ISO_INSTANCE}.env; set +a
-            exec setpriv --reuid=legionr --regid=legionr --clear-groups \
+            exec timeout ${limit} setpriv --reuid=legionr --regid=legionr --clear-groups \
               --inh-caps=-all,+setuid,+setgid --ambient-caps=-all,+setuid,+setgid \
               --bounding-set=-all,+setuid,+setgid --no-new-privs \
               /usr/local/bin/legionr --config ${ISO_CFG} $*" 2>&1 | sed 's/^/    | /'
@@ -269,25 +269,9 @@ VICTIM
 }
 
 # ── LIVE tier ────────────────────────────────────────────────────────────────
-# Fetch GitHub's official runner into RUNNER_DIR (mirrors scripts/install.sh).
-fetch_official_runner() {
-    local arch ver tarball url tmp
-    case "$(uname -m)" in
-        x86_64|amd64) arch="x64" ;;
-        aarch64|arm64) arch="arm64" ;;
-        *) die "unsupported arch $(uname -m)" ;;
-    esac
-    ver="$(curl -fsSL https://api.github.com/repos/actions/runner/releases/latest \
-           | grep -m1 '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')"
-    [ -n "$ver" ] || die "could not resolve actions/runner version"
-    tarball="actions-runner-linux-${arch}-${ver}.tar.gz"
-    url="https://github.com/actions/runner/releases/download/v${ver}/${tarball}"
-    log "fetching official runner ${ver} (${arch})"
-    tmp="$(mktemp -d)"
-    curl -fsSL "$url" -o "${tmp}/${tarball}"
-    tar -xzf "${tmp}/${tarball}" -C "$RUNNER_DIR"
-    rm -rf "$tmp"
-}
+# Runs after the LOCAL tier, which installed the real two-user layout (and the
+# official runner, via scripts/install.sh). Each job is served by `legionr run
+# --once` started exactly the way the unit starts it (see as_unit).
 
 # Dispatch the scope's receiver workflow so a job is queued for our label.
 dispatch_job() {
@@ -307,7 +291,7 @@ serve_one() {
     local label="$1" logf="$2"
     dispatch_job "$label"
     log "serving one job (timeout ${SERVE_TIMEOUT}s)"
-    if ! timeout "$SERVE_TIMEOUT" "$BIN" --config "$CFG" run --once >"$logf" 2>&1; then
+    if ! AS_UNIT_TIMEOUT="$SERVE_TIMEOUT" as_unit run --once >"$logf" 2>&1; then
         cat "$logf" >&2
         die "run --once did not complete a job successfully"
     fi
@@ -315,22 +299,28 @@ serve_one() {
 }
 
 run_live() {
-    [ -n "${LEGIONR_TOKEN:-}" ] || { warn "no LEGIONR_TOKEN — skipping LIVE tier"; return 0; }
-    log "LIVE tier — real ephemeral runner against $SCOPE"
-    fetch_official_runner
+    [ -n "${LEGIONR_TOKEN:-}" ] || { warn "no LEGIONR_TOKEN; skipping LIVE tier"; return 0; }
+    [ "$(id -u)" -eq 0 ] || command -v sudo >/dev/null 2>&1 || die "live mode needs root"
+    log "LIVE tier: real ephemeral runner against $SCOPE, jobs as legionr-job"
 
     local label="legion-e2e-${GITHUB_RUN_ID:-local}-${RANDOM}"
-    provision_config --labels "self-hosted,linux,legion,ephemeral,${label}"
+    $SUDO env LEGIONR_DATA_DIR=/opt/legion-runner /usr/local/bin/legionr --config "$ISO_CFG" \
+        provision "$SCOPE" --no-probe --link "" \
+        --labels "self-hosted,linux,legion,ephemeral,${label}" >/dev/null
+    $SUDO chown root:legionr "$ISO_CFG" && $SUDO chmod 0640 "$ISO_CFG"
+    # The token goes in the env file only (root 0600), the way an operator sets it.
+    printf 'LEGIONR_TOKEN=%s\n' "$LEGIONR_TOKEN" \
+        | $SUDO tee -a "/etc/legion-runner/${ISO_INSTANCE}.env" >/dev/null
+    $SUDO sh -c "/usr/local/bin/legionr --config '$ISO_CFG' harden \
+        | awk '/^# ── \/etc\/systemd/{f=1;next} /^# ── \/etc\/sysctl/{f=0} f' \
+        > /etc/systemd/system/legionr@.service"
 
-    # Serve one job and assert single-use teardown.
     local n1; n1="$(serve_one "$label" "${PREFIX}/job1.log")"
     [ -n "$n1" ] || die "could not determine the first runner's name"
     pass "job #1 served and succeeded on runner: $n1"
 
-    if [ -d "$WORK_DIR" ] && [ -n "$(ls -A "$WORK_DIR" 2>/dev/null)" ]; then
-        die "work dir not wiped after teardown: $WORK_DIR"
-    fi
-    pass "work dir wiped after teardown (nothing survives the job)"
+    [ -z "$($SUDO ls -A /opt/legion-runner/_work)" ] || die "work dir not wiped after the job"
+    pass "work dir wiped after the job (nothing survives)"
 
     # Second job must land on a DISTINCT runner name (single-use guarantee).
     local n2; n2="$(serve_one "$label" "${PREFIX}/job2.log")"
@@ -338,6 +328,7 @@ run_live() {
     [ "$n1" != "$n2" ] || die "single-use violated: both jobs used runner '$n1'"
     pass "job #2 used a DISTINCT runner: $n2 (single-use confirmed)"
 
+    $SUDO rm -f /etc/systemd/system/legionr-e2e-check@.service /etc/systemd/system/legionr@.service
     log "LIVE tier passed"
 }
 
