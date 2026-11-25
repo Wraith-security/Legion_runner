@@ -41,7 +41,8 @@ const TOKEN_RE = /^[0-9a-f]{16}$/;
 /// The bracketed first letter keeps the pattern from matching pkill itself.
 /// Without a valid token (no state), it falls back to the name alone.
 function daemonPattern(name, token) {
-  const bracketed = `[${name[0]}]${name.slice(1).replace(/\./g, "\\.")}`;
+  const escape = (s) => s.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+  const bracketed = `[${escape(name[0])}]${escape(name.slice(1))}`;
   return typeof token === "string" && TOKEN_RE.test(token) ? `${bracketed}.*legion-run=${token}` : bracketed;
 }
 
@@ -60,7 +61,7 @@ function teardown(dir) {
   } catch {
     /* no state: fall back to killing the daemons by name */
   }
-  for (const name of ["dnscap.js", "legionr-bpf", "monitor.js"]) {
+  for (const name of ["dnscap.js", "legionr-bpf", "launch.js", "monitor.js"]) {
     try {
       exec(["pkill", "-9", "-f", daemonPattern(name, st.runToken)]);
     } catch {

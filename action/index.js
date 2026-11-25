@@ -420,7 +420,7 @@ async function startEbpf(connectLog, bin) {
     // so the job cannot rewrite the connection record. stderr is kept: loading
     // eBPF can fail for real reasons (no BTF, no CAP_BPF, old kernel) and the
     // agent prints why.
-    const child = spawnPrivileged("/bin/sh", ["-c", 'exec "$0" "$3" >>"$1" 2>>"$2"', bin, connectLog, errLog, runTag()], {
+    const child = spawnPrivileged(process.execPath, [path.join(__dirname, "launch.js"), bin, connectLog, errLog, runTag()], {
       detached: true,
       stdio: "ignore",
     });
