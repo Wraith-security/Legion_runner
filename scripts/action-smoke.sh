@@ -27,12 +27,17 @@ fail() { printf '  FAIL %s\n' "$*"; FAILED=1; }
 FAILED=0
 
 # Private copies of what the action edits.
-printf 'nameserver 127.0.0.2\n' > "$M/resolv.conf"; mount --bind "$M/resolv.conf" /etc/resolv.conf
+# /run first: on Ubuntu runners /etc/resolv.conf is a symlink into /run, so a
+# bind made through it before replacing /run would be hidden again.
+mkdir -p "$M/run"; chmod 0755 "$M/run"; mount --bind "$M/run" /run
+printf 'nameserver 127.0.0.2\n' > "$M/resolv.conf"
+RESOLV="$(readlink -m /etc/resolv.conf)"   # -m: the target may not exist yet
+mkdir -p "$(dirname "$RESOLV")"; [ -e "$RESOLV" ] || : > "$RESOLV"
+mount --bind "$M/resolv.conf" "$RESOLV"
 cp /etc/nsswitch.conf "$M/nsswitch.conf"; mount --bind "$M/nsswitch.conf" /etc/nsswitch.conf
 mkdir -p "$M/sudoers.d"; chmod 0750 "$M/sudoers.d"
 printf 'Defaults use_pty\n%s ALL=(ALL) NOPASSWD:ALL\n' "$U" > "$M/sudoers.d/$U"; chmod 0440 "$M/sudoers.d/$U"
 mount --bind "$M/sudoers.d" /etc/sudoers.d
-mkdir -p "$M/run"; chmod 0755 "$M/run"; mount --bind "$M/run" /run
 
 # Loopback up, default route via lo, fake upstream answering 192.0.2.10.
 python3 - <<'PY'
@@ -61,7 +66,19 @@ while True:
     up.sendto(ans, a)
 PY
 UPSTREAM=$!
-sleep 0.5
+# Wait until the fake upstream answers (a slow CI runner may need more than a
+# fixed sleep), and say so if it never does.
+python3 - <<'PY' || { echo "fake upstream on 127.0.0.2:53 never answered"; exit 1; }
+import socket, struct, time, sys
+q = struct.pack('>HHHHHH', 7, 0x0100, 1, 0, 0, 0) + b'\x07example\x03com\x00\x00\x01\x00\x01'
+for _ in range(50):
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(0.2)
+    try:
+        s.sendto(q, ('127.0.0.2', 53)); s.recv(512); print("  fake upstream answering"); sys.exit(0)
+    except Exception:
+        time.sleep(0.1)
+sys.exit(1)
+PY
 
 # The job user must be able to read the action (a CI checkout under
 # /home/runner is not readable by other users), so run a copy.
@@ -107,6 +124,7 @@ chown -R "$U" "$W"
 su "$U" -c "'$W/Runner.Worker' '$W/job.sh'"
 sleep 3   # Runner.Worker has exited: give the warden its 1s poll and teardown
 
+echo "== namespace"; printf '   resolv.conf: %s\n' "$(tr '\n' ' ' < /etc/resolv.conf)"; ss -lunp 2>/dev/null | grep ':53 ' | sed 's/^/   /' || true
 echo "== main";    grep -E 'Legion|evidence|enforced|DNS|sudo|error|main-exit' "$W/main.log" | sed 's/^/   /'
 echo "== steps";   sed 's/^/   /' "$W/steps.log"
 echo "== checks"
