@@ -16,8 +16,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { execFileSync } = require("node:child_process");
 
-const RELEASE_BIN =
-  "https://github.com/Wraith-security/legion_runner/releases/latest/download/legionr-bpf";
+const agents = require("./agents.js");
 
 const sha256 = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
 // Extract the 64-hex digest from a `sha256sum` sidecar ("<hash>  <name>") or a
@@ -27,19 +26,6 @@ function parseSha256(text) {
   return m ? m[1].toLowerCase() : null;
 }
 
-// Verify a downloaded buffer against the `<url>.sha256` sidecar from the same
-// release (authentic over GitHub TLS). Fail CLOSED: returns false on any
-// missing/mismatched/error case, so we never run an unverified privileged binary.
-async function verifyAgainstSidecar(url, buf) {
-  try {
-    const res = await fetch(url + ".sha256", { redirect: "follow" });
-    if (!res.ok) return false;
-    const expected = parseSha256(await res.text());
-    return !!expected && sha256(buf) === expected;
-  } catch {
-    return false;
-  }
-}
 
 // A binary is safe to run via sudo (root) only if it is root-owned and not
 // writable by the (untrusted) job user. A non-root job cannot create such a
@@ -79,26 +65,27 @@ function hasBtf() {
   return fs.existsSync("/sys/kernel/btf/vmlinux");
 }
 
-// Resolve a usable agent binary: a local one, else best-effort download of the
-// latest release asset (x86_64 glibc Linux). Returns a path or null — callers
-// fall back to the /proc sampler on null.
-async function ensureBinary() {
+// Default install: a 0755 file in the temp dir. The action passes an install
+// that writes into its root-only directory instead, so a job cannot swap the
+// binary between download and the privileged exec.
+function tmpInstall(buf, name) {
+  const dest = path.join(os.tmpdir(), name);
+  fs.writeFileSync(dest, buf, { mode: 0o755 });
+  return dest;
+}
+
+// Resolve a usable agent binary: a local one, else the build pinned (by
+// release and SHA-256) in action/agents.json (x86_64 glibc Linux). Returns a
+// path or null; callers fall back to the /proc sampler on null.
+async function ensureBinary(opts = {}) {
   if (!hasBtf()) return null;
   const local = binPath();
   if (local) return local;
   if (process.platform !== "linux" || process.arch !== "x64") return null;
-  if (typeof fetch !== "function") return null;
+  const buf = await agents.fetchPinned("legionr-bpf", opts.fetch);
+  if (!buf) return null; // not pinned, unreachable, or the hash did not match
   try {
-    const res = await fetch(RELEASE_BIN, { redirect: "follow" });
-    if (!res.ok) return null;
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length < 1024) return null; // not a real binary (e.g. 404 page)
-    // Fail closed if the checksum sidecar is missing or doesn't match — we are
-    // about to run this binary with sudo, so an unverified download is a no-go.
-    if (!(await verifyAgainstSidecar(RELEASE_BIN, buf))) return null;
-    const dest = path.join(os.tmpdir(), "legionr-bpf");
-    fs.writeFileSync(dest, buf, { mode: 0o755 });
-    return dest;
+    return (opts.install || tmpInstall)(buf, "legionr-bpf");
   } catch {
     return null;
   }

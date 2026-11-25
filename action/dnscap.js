@@ -6,7 +6,13 @@
 // for — accuracy reverse-DNS can't match. Relay is type-agnostic (the raw
 // packet is forwarded both ways), so SRV/TXT/CNAME/etc. all work normally.
 //
-//   sudo node dnscap.js <logFile> <upstreamIp> [port]
+//   sudo node dnscap.js <logFile> <upstreamIp> [port] [enforce 0|1] [allow-csv] [refusedLog]
+//
+// In block mode (enforce=1) a query for a name outside the allowlist is
+// answered REFUSED and never forwarded, so a job cannot tunnel data out through
+// DNS lookups of attacker-chosen names. Block mode also redirects every
+// non-root DNS query on the host to this forwarder (see firewall.js), so a
+// custom resolver or `dig @8.8.8.8` gets the same treatment.
 
 "use strict";
 
@@ -20,6 +26,7 @@ const port = parseInt(process.argv[4], 10) || 53;
 // Enforcement: when on, IPs answered for an allowlisted domain are added to the
 // firewall (LEGION_EGRESS chain) before the reply is relayed — block-by-domain.
 const ENFORCE = process.argv[5] === "1";
+const REFUSED_LOG = process.argv[7] || "";
 const ALLOW = (process.argv[6] || "")
   .toLowerCase()
   .split(",")
@@ -37,16 +44,43 @@ function domainAllowed(name, allow = ALLOW) {
   return allow.some((d) => name === d || name.endsWith("." + d));
 }
 
-// Insert an ACCEPT for `ip` ahead of the chain's terminal DROP (dedup in-mem).
+// Insert an ACCEPT for `ip` ahead of the terminal DROP of the host chain and,
+// when present, the container chain (dedup in-mem). `-w` waits for the xtables
+// lock instead of failing when another process (Docker) holds it.
 function allowIp(ip) {
   if (!ip || allowed.has(ip)) return;
   const bin = ip.includes(":") ? "ip6tables" : "iptables";
-  try {
-    execFileSync(bin, ["-I", "LEGION_EGRESS", "-d", ip, "-j", "ACCEPT"], { stdio: "ignore" });
-    allowed.add(ip);
-  } catch {
-    /* firewall may be unavailable; static allowlist still applies */
+  let ok = false;
+  for (const chain of ["LEGION_EGRESS", "LEGION_FWD"]) {
+    try {
+      execFileSync(bin, ["-w", "5", "-I", chain, "-d", ip, "-j", "ACCEPT"], { stdio: "ignore" });
+      if (chain === "LEGION_EGRESS") ok = true;
+    } catch {
+      /* LEGION_FWD is absent when there is no external interface */
+    }
   }
+  if (ok) allowed.add(ip);
+}
+
+// The question name of a DNS query, or "" if it cannot be read.
+function queryName(buf) {
+  if (buf.length < 12 || buf.readUInt16BE(4) < 1) return "";
+  return readName(buf, 12);
+}
+
+// Pure: a REFUSED answer for `query` (same id and question, no records).
+function refusedResponse(query) {
+  if (query.length < 12) return null;
+  const qEnd = skipName(query, 12) + 4;
+  if (qEnd > query.length) return null;
+  const out = Buffer.from(query.subarray(0, qEnd));
+  const opcodeRd = query.readUInt16BE(2) & 0x7900; // opcode + RD from the query
+  out.writeUInt16BE(0x8000 | opcodeRd | 0x0080 | 5, 2); // QR, RA, rcode 5
+  out.writeUInt16BE(1, 4); // qdcount
+  out.writeUInt16BE(0, 6);
+  out.writeUInt16BE(0, 8);
+  out.writeUInt16BE(0, 10);
+  return out;
 }
 
 // Read a (possibly compressed) DNS name; returns the dotted string.
@@ -109,6 +143,21 @@ function extract(buf) {
 // Only bind/relay when run as a script; importing (for tests) is side-effect free.
 if (require.main === module) {
   server.on("message", (msg, rinfo) => {
+    if (ENFORCE) {
+      const name = queryName(msg);
+      if (!domainAllowed(name)) {
+        const answer = refusedResponse(msg);
+        if (answer) server.send(answer, rinfo.port, rinfo.address);
+        if (REFUSED_LOG && name) {
+          try {
+            fs.appendFileSync(REFUSED_LOG, name.toLowerCase() + "\n");
+          } catch {
+            /* best-effort */
+          }
+        }
+        return;
+      }
+    }
     if (msg.length >= 2) inflight.set(msg.readUInt16BE(0), { addr: rinfo.address, port: rinfo.port });
     client.send(msg, 53, upstream);
   });
@@ -144,4 +193,4 @@ if (require.main === module) {
   server.bind(port, "127.0.0.1");
 }
 
-module.exports = { extract, readName, domainAllowed }; // for tests
+module.exports = { extract, readName, domainAllowed, queryName, refusedResponse }; // for tests

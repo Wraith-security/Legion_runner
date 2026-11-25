@@ -21,25 +21,13 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { execFileSync } = require("node:child_process");
 
-const RELEASE_BIN =
-  "https://github.com/Wraith-security/legion_runner/releases/latest/download/legionr-fim";
+const agents = require("./agents.js");
 
 const sha256 = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
 // Extract the 64-hex digest from a `sha256sum` sidecar or bare hash. Pure (tested).
 function parseSha256(text) {
   const m = (text || "").trim().match(/\b([a-fA-F0-9]{64})\b/);
   return m ? m[1].toLowerCase() : null;
-}
-// Verify a download against the `<url>.sha256` sidecar; fail closed.
-async function verifyAgainstSidecar(url, buf) {
-  try {
-    const res = await fetch(url + ".sha256", { redirect: "follow" });
-    if (!res.ok) return false;
-    const expected = parseSha256(await res.text());
-    return !!expected && sha256(buf) === expected;
-  } catch {
-    return false;
-  }
 }
 
 // Locate the Rust binary: explicit env, then PATH, then alongside the action.
@@ -62,18 +50,15 @@ function binPath() {
 // Resolve a usable binary: a local one, else best-effort download of the latest
 // release asset (x86_64 glibc Linux). Returns a path or null — callers skip FIM
 // on null. No kernel/BTF requirement (pure userspace file hashing).
-async function ensureBinary() {
+async function ensureBinary(opts = {}) {
   const local = binPath();
   if (local) return local;
   if (process.platform !== "linux" || process.arch !== "x64") return null;
-  if (typeof fetch !== "function") return null;
+  // Only the build pinned by release and SHA-256 in action/agents.json.
+  const buf = await agents.fetchPinned("legionr-fim", opts.fetch);
+  if (!buf) return null;
   try {
-    const res = await fetch(RELEASE_BIN, { redirect: "follow" });
-    if (!res.ok) return null;
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length < 1024) return null; // not a real binary (e.g. 404 page)
-    // Fail closed on missing/mismatched checksum — we run this binary directly.
-    if (!(await verifyAgainstSidecar(RELEASE_BIN, buf))) return null;
+    if (opts.install) return opts.install(buf, "legionr-fim");
     const dest = path.join(os.tmpdir(), "legionr-fim");
     fs.writeFileSync(dest, buf, { mode: 0o755 });
     return dest;
@@ -84,10 +69,13 @@ async function ensureBinary() {
 
 // Snapshot the tamper targets to `snapFile`. Returns { sensitive, source }
 // counts (parsed from the binary's stdout summary), or zeros on parse failure.
-function runSnapshot(bin, snapFile, workspace, extra = []) {
+// `prefix` runs the binary through another command (["sudo", "-n"]) so the
+// snapshot lands in, and is later diffed from, the root-only evidence dir.
+function runSnapshot(bin, snapFile, workspace, extra = [], prefix = []) {
   const args = ["snapshot", snapFile, "--workspace", workspace];
   for (const p of extra) args.push("--extra", p);
-  const out = execFileSync(bin, args, { stdio: ["ignore", "pipe", "pipe"] }).toString();
+  const argv = [...prefix, bin, ...args];
+  const out = execFileSync(argv[0], argv.slice(1), { stdio: ["ignore", "pipe", "pipe"] }).toString();
   try {
     return JSON.parse(out.trim());
   } catch {
@@ -97,8 +85,9 @@ function runSnapshot(bin, snapFile, workspace, extra = []) {
 
 // Diff the current filesystem against `snapFile`. Returns an array of
 // { path, reason, scope } change records (empty on no changes / parse failure).
-function runDiff(bin, snapFile) {
-  const out = execFileSync(bin, ["diff", snapFile], {
+function runDiff(bin, snapFile, prefix = []) {
+  const argv = [...prefix, bin, "diff", snapFile];
+  const out = execFileSync(argv[0], argv.slice(1), {
     stdio: ["ignore", "pipe", "ignore"],
   }).toString();
   try {

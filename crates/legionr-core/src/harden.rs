@@ -25,6 +25,34 @@ pub const GITHUB_EGRESS: &[&str] = &[
     "pipelines.actions.githubusercontent.com",
 ];
 
+/// Non-loopback nameservers from resolv.conf-style text, per family. The host
+/// firewall allows DNS only to these. Loopback stubs (127.0.0.53) are skipped:
+/// loopback traffic is allowed anyway, and the stub forwards to these.
+pub fn parse_resolvers(texts: &[&str]) -> (Vec<String>, Vec<String>) {
+    let (mut v4, mut v6) = (Vec::new(), Vec::new());
+    for text in texts {
+        for line in text.lines() {
+            let mut it = line.split_whitespace();
+            if it.next() != Some("nameserver") {
+                continue;
+            }
+            let Some(raw) = it.next() else { continue };
+            let ip = raw.split('%').next().unwrap_or(raw);
+            match ip.parse::<std::net::IpAddr>() {
+                Ok(addr) if addr.is_loopback() => {}
+                Ok(std::net::IpAddr::V4(a)) if !v4.contains(&a.to_string()) => {
+                    v4.push(a.to_string())
+                }
+                Ok(std::net::IpAddr::V6(a)) if !v6.contains(&a.to_string()) => {
+                    v6.push(a.to_string())
+                }
+                _ => {}
+            }
+        }
+    }
+    (v4, v6)
+}
+
 /// A hardening profile derived from a [`RunnerConfig`].
 pub struct HardeningProfile<'a> {
     cfg: &'a RunnerConfig,
@@ -166,20 +194,52 @@ impl<'a> HardeningProfile<'a> {
             .to_string()
     }
 
-    /// Generate an nftables ruleset: default-deny egress with a DNS + GitHub
-    /// (and operator) allowlist. Hostnames resolve at load time via `nft`'s
-    /// own resolver, so the script re-resolves on each (re)load.
+    /// The nftables ruleset as a template: the allow and resolver sets are
+    /// empty and the hostnames are listed as comments. Documentation only;
+    /// `harden --install` writes [`Self::nftables_ruleset_with_ips`].
     pub fn nftables_ruleset(&self) -> String {
-        let hosts = self.egress_hosts();
-        let allow_block = hosts
+        let hosts = self
+            .egress_hosts()
             .iter()
-            .map(|h| format!("        # {h}"))
+            .map(|h| format!("#   {h}"))
             .collect::<Vec<_>>()
             .join("\n");
-        // When Tailscale is the management path, open the mesh (direct WireGuard
-        // + STUN) in the chain so default-deny never strands the operator. The
-        // control-plane hosts are already in the resolved allow set above. Empty
-        // when disabled, so the ruleset is byte-identical to before.
+        let mut out = self.ruleset(&[], &[], &[], &[]);
+        out.push_str("# Allowlisted hostnames (resolved into allow4/allow6 at install):\n");
+        out.push_str(&hosts);
+        out.push('\n');
+        out
+    }
+
+    /// The ruleset to load, with the allow sets populated from resolved IPs
+    /// (#71: never install a default-deny chain with empty allow sets) and DNS
+    /// limited to the host's own upstream resolvers.
+    pub fn nftables_ruleset_with_ips(
+        &self,
+        v4: &[String],
+        v6: &[String],
+        dns4: &[String],
+        dns6: &[String],
+    ) -> String {
+        self.ruleset(v4, v6, dns4, dns6)
+    }
+
+    /// One body for both outputs, so the template and the installed file can
+    /// never drift apart again (the installed one used to drop the Tailscale
+    /// rules). Starts by replacing any loaded copy, so it is safe to reload.
+    ///
+    /// DNS may only go to the configured resolvers (dns4/dns6), not to any
+    /// address on port 53: before, a job could send data to its own server on
+    /// port 53. Lookups through the resolver itself are not filtered by name
+    /// here; that needs a filtering resolver (see docs).
+    fn ruleset(&self, v4: &[String], v6: &[String], dns4: &[String], dns6: &[String]) -> String {
+        let elems = |ips: &[String]| {
+            if ips.is_empty() {
+                String::new()
+            } else {
+                format!(" elements = {{ {} }}", ips.join(", "))
+            }
+        };
         let ts_block = if self.cfg.tailscale.enabled {
             let mut s = self.cfg.tailscale.nft_allow_rules().join("\n");
             s.push('\n');
@@ -189,60 +249,31 @@ impl<'a> HardeningProfile<'a> {
         };
         format!(
             "#!/usr/sbin/nft -f\n\
-             # Legion Runner — default-deny egress allowlist.\n\
-             # Hostnames are resolved by the companion harden.sh into IP sets;\n\
-             # this template documents intent and the loopback/DNS baseline.\n\
-             table inet legionr {{\n\
-             \x20   set allow4 {{ type ipv4_addr; flags interval; }}\n\
-             \x20   set allow6 {{ type ipv6_addr; flags interval; }}\n\
-             \x20   chain output {{\n\
-             \x20       type filter hook output priority 0; policy drop;\n\
-             \x20       ct state established,related accept\n\
-             \x20       oifname \"lo\" accept\n\
-             \x20       udp dport 53 accept\n\
-             \x20       tcp dport 53 accept\n\
-             {ts_block}\
-             \x20       ip daddr @allow4 tcp dport {{ 80, 443 }} accept\n\
-             \x20       ip6 daddr @allow6 tcp dport {{ 80, 443 }} accept\n\
-             \x20       # allowlisted destinations (resolved at load):\n\
-             {allow_block}\n\
-             \x20   }}\n\
-             }}\n"
-        )
-    }
-
-    /// Like [`Self::nftables_ruleset`] but with the allow sets **populated** from
-    /// resolved IPs, so the ruleset is safe to load directly. `harden --install`
-    /// writes this, never the empty-set template: a default-deny chain with empty
-    /// allow sets takes the host off the network, the operator's management path
-    /// included (#71). Empty `elements` clauses are omitted (invalid nft),
-    /// matching `harden.sh`.
-    pub fn nftables_ruleset_with_ips(&self, v4: &[String], v6: &[String]) -> String {
-        let elems = |ips: &[String]| {
-            if ips.is_empty() {
-                String::new()
-            } else {
-                format!(" elements = {{ {} }}", ips.join(", "))
-            }
-        };
-        let a4 = elems(v4);
-        let a6 = elems(v6);
-        format!(
-            "#!/usr/sbin/nft -f\n\
-             # Legion Runner — default-deny egress allowlist (resolved).\n\
+             # Legion Runner: default-deny egress allowlist.\n\
+             table inet legionr\n\
+             delete table inet legionr\n\
              table inet legionr {{\n\
              \x20   set allow4 {{ type ipv4_addr; flags interval;{a4} }}\n\
              \x20   set allow6 {{ type ipv6_addr; flags interval;{a6} }}\n\
+             \x20   set dns4 {{ type ipv4_addr;{d4} }}\n\
+             \x20   set dns6 {{ type ipv6_addr;{d6} }}\n\
              \x20   chain output {{\n\
              \x20       type filter hook output priority 0; policy drop;\n\
              \x20       ct state established,related accept\n\
              \x20       oifname \"lo\" accept\n\
-             \x20       udp dport 53 accept\n\
-             \x20       tcp dport 53 accept\n\
+             \x20       ip daddr @dns4 udp dport 53 accept\n\
+             \x20       ip daddr @dns4 tcp dport 53 accept\n\
+             \x20       ip6 daddr @dns6 udp dport 53 accept\n\
+             \x20       ip6 daddr @dns6 tcp dport 53 accept\n\
+             {ts_block}\
              \x20       ip daddr @allow4 tcp dport {{ 80, 443 }} accept\n\
              \x20       ip6 daddr @allow6 tcp dport {{ 80, 443 }} accept\n\
              \x20   }}\n\
-             }}\n"
+             }}\n",
+            a4 = elems(v4),
+            a6 = elems(v6),
+            d4 = elems(dns4),
+            d6 = elems(dns6),
         )
     }
 
@@ -361,7 +392,15 @@ mod tests {
         let c = cfg();
         let rs = HardeningProfile::new(&c).nftables_ruleset();
         assert!(rs.contains("policy drop"));
-        assert!(rs.contains("udp dport 53 accept"));
+        // DNS only to the configured resolvers, never to any address.
+        assert!(rs.contains("ip daddr @dns4 udp dport 53 accept"));
+        for line in rs.lines() {
+            let l = line.trim();
+            assert!(
+                !(l.starts_with("udp dport 53") || l.starts_with("tcp dport 53")),
+                "port 53 open to any address: {l}"
+            );
+        }
         // Off by default: no Tailscale rules leak into a non-Tailscale ruleset.
         assert!(!rs.contains("41641"));
     }
@@ -392,6 +431,43 @@ mod tests {
     }
 
     #[test]
+    fn resolvers_skip_loopback_dedupe_and_split_families() {
+        let a = "nameserver 127.0.0.53\noptions edns0\nnameserver 10.0.0.2\n";
+        let b = "# comment\nnameserver 10.0.0.2\nnameserver fe80::1%eth0\nnameserver ::1\nnameserver bogus\n";
+        let (v4, v6) = parse_resolvers(&[a, b]);
+        assert_eq!(v4, vec!["10.0.0.2".to_string()]);
+        assert_eq!(v6, vec!["fe80::1".to_string()]);
+        assert_eq!(parse_resolvers(&["nameserver 127.0.0.1"]), (vec![], vec![]));
+    }
+
+    #[test]
+    fn installed_ruleset_limits_dns_keeps_tailscale_and_reloads_cleanly() {
+        let mut c = cfg();
+        c.tailscale.enabled = true;
+        let p = HardeningProfile::new(&c);
+        let rs =
+            p.nftables_ruleset_with_ips(&["140.82.112.3".into()], &[], &["10.0.0.2".into()], &[]);
+        assert!(
+            rs.contains("set dns4 { type ipv4_addr; elements = { 10.0.0.2 } }"),
+            "{rs}"
+        );
+        assert!(rs.contains("ip daddr @dns4 udp dport 53 accept"));
+        // The installed file used to drop the Tailscale rules.
+        assert!(
+            rs.contains("udp dport 41641 accept"),
+            "Tailscale missing from the installed ruleset"
+        );
+        // Reloadable: replaces any loaded copy instead of adding to it.
+        let head: Vec<&str> = rs.lines().take(4).collect();
+        assert_eq!(head[2], "table inet legionr");
+        assert_eq!(head[3], "delete table inet legionr");
+        // Template and installed file share one body.
+        let tpl = p.nftables_ruleset();
+        assert!(tpl.contains("ip daddr @dns4 udp dport 53 accept"));
+        assert!(tpl.contains("udp dport 41641 accept"));
+    }
+
+    #[test]
     fn unit_backs_off_on_crash_loop() {
         // #73: no disabled start limiter; a real window + burst so a credential
         // failure loop can't hammer generate-jitconfig forever.
@@ -418,13 +494,18 @@ mod tests {
         // #71: the installed ruleset carries resolved IPs in the allow sets.
         let c = cfg();
         let p = HardeningProfile::new(&c);
-        let rs = p.nftables_ruleset_with_ips(&["140.82.112.3".into()], &["2606:50c0::153".into()]);
+        let rs = p.nftables_ruleset_with_ips(
+            &["140.82.112.3".into()],
+            &["2606:50c0::153".into()],
+            &[],
+            &[],
+        );
         assert!(rs.contains("elements = { 140.82.112.3 }"));
         assert!(rs.contains("elements = { 2606:50c0::153 }"));
         assert!(rs.contains("policy drop"));
         // Empty families omit the `elements` clause (an empty `{ }` is invalid nft)
         // while still emitting a valid, loadable set declaration.
-        let empty = p.nftables_ruleset_with_ips(&[], &[]);
+        let empty = p.nftables_ruleset_with_ips(&[], &[], &[], &[]);
         assert!(!empty.contains("elements = {"));
         assert!(empty.contains("set allow4 { type ipv4_addr; flags interval; }"));
     }

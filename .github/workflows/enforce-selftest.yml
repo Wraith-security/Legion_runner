@@ -99,3 +99,119 @@ jobs:
           echo "example.com reachable under block + dns-capture — dynamic allow works."
           # The decisive assertion is implicit: the post step tears down the
           # firewall + every daemon; if it doesn't, this job times out.
+
+  # H1: in block mode no job step may use DNS to reach anything off the
+  # allowlist. Every non-root query is redirected to the forwarder, names off
+  # the allowlist are REFUSED, and a resolved restart (what Docker interface
+  # changes trigger) must not knock out allow-by-domain.
+  dns-lockdown:
+    name: Block refuses DNS off the allowlist, whatever resolver is asked
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Make sure dig is present (before the firewall goes up)
+        run: command -v dig || (sudo apt-get update -qq && sudo apt-get install -y -qq dnsutils)
+      - name: Harden (block) with DNS capture
+        uses: ./
+        with:
+          egress-policy: block
+          allowed-endpoints: |
+            example.com
+          dns-capture: 'true'
+          job-summary: 'false'
+          ebpf: 'off'
+          learned-baseline: 'false'
+      - name: Unlisted names are refused, even asked of an outside resolver
+        run: |
+          set -u
+          fail=0
+          out="$(dig +time=5 +tries=1 @1.1.1.1 "exfil-${RANDOM}.example.net" A 2>&1 || true)"
+          echo "$out" | grep -q 'status: REFUSED' || { echo "FAIL: unlisted name not refused via 1.1.1.1"; echo "$out"; fail=1; }
+          out="$(dig +time=5 +tries=1 "exfil-${RANDOM}.example.net" A 2>&1 || true)"
+          echo "$out" | grep -q 'status: REFUSED' || { echo "FAIL: unlisted name not refused via the system resolver"; echo "$out"; fail=1; }
+          if dig +tcp +time=5 +tries=1 @1.1.1.1 example.com A >/dev/null 2>&1 && \
+             dig +tcp +short +time=5 +tries=1 @1.1.1.1 example.com A | grep -q .; then
+            echo "FAIL: TCP DNS to an outside resolver got through"; fail=1
+          fi
+          dig +short +time=5 +tries=1 @1.1.1.1 example.com A | grep -qE '^[0-9.]+$' \
+            || { echo "FAIL: allowlisted name did not resolve"; fail=1; }
+          exit "$fail"
+      - name: Allow-by-domain survives a systemd-resolved restart
+        run: |
+          set -e
+          sudo systemctl restart systemd-resolved
+          sleep 2
+          curl -sS --max-time 25 -o /dev/null https://example.com
+          if curl -sS --max-time 15 -o /dev/null https://www.wikipedia.org; then
+            echo "FAIL: unlisted host reachable"; exit 1
+          fi
+          echo "PASS: allowlisted host reachable after the restart, unlisted host still denied"
+
+  # H5: containers. Their traffic is forwarded and never passed OUTPUT, so it
+  # used to bypass block mode entirely.
+  containers:
+    name: Block applies to containers too
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Pull the test image (before the firewall goes up)
+        run: docker pull -q alpine:3.20
+      - name: Harden (block)
+        uses: ./
+        with:
+          egress-policy: block
+          allowed-endpoints: |
+            example.com
+          dns-capture: 'true'
+          job-summary: 'false'
+          ebpf: 'off'
+          learned-baseline: 'false'
+      - name: A container reaches the allowlist and nothing else
+        run: |
+          set -u
+          docker run --rm alpine:3.20 wget -q -T 20 -O /dev/null https://example.com \
+            || { echo "FAIL: container could not reach the allowlisted host"; exit 1; }
+          if docker run --rm alpine:3.20 wget -q -T 15 -O /dev/null https://www.wikipedia.org; then
+            echo "FAIL: container reached an unlisted host (block mode bypassed)"; exit 1
+          fi
+          echo "PASS: container egress is filtered like the host's"
+
+  # H2 and H4: with disable-sudo the job really loses sudo, cannot read or edit
+  # Legion's evidence, block mode stays up, and the job still finalizes (the
+  # warden tears down when Runner.Worker exits; a hang hits the timeout).
+  sudo-revoked:
+    name: disable-sudo revokes sudo and the job still finalizes
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Harden (block, disable-sudo)
+        uses: ./
+        with:
+          egress-policy: block
+          allowed-endpoints: |
+            example.com
+          dns-capture: 'true'
+          disable-sudo: 'true'
+          job-summary: 'false'
+          ebpf: 'off'
+          learned-baseline: 'false'
+      - name: No sudo, no evidence access, block still enforced
+        run: |
+          set -u
+          fail=0
+          if sudo -n true 2>/dev/null; then echo "FAIL: sudo still works"; fail=1; fi
+          if sudo -n iptables -F 2>/dev/null; then echo "FAIL: could flush the firewall"; fail=1; fi
+          if ls /run/legion >/dev/null 2>&1; then echo "FAIL: evidence dir is listable"; fail=1; fi
+          if echo x 2>/dev/null >> /run/legion/state.json; then echo "FAIL: evidence is writable"; fail=1; fi
+          curl -sS --max-time 25 -o /dev/null https://example.com || { echo "FAIL: allowlisted host blocked"; fail=1; }
+          if curl -sS --max-time 15 -o /dev/null https://www.wikipedia.org; then echo "FAIL: unlisted host reachable"; fail=1; fi
+          exit "$fail"

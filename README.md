@@ -187,7 +187,7 @@ bare IPs is triagable without leaking infrastructure detail.
 | `allowed-endpoints` | `` | `host` / `host:port` entries to permit in block mode. |
 | `allowed-presets` | `` | Curated ecosystem allowlists (npm, pip, cargo, apt, docker, and more) to permit in block mode. |
 | `allow-github` | `true` | Always allow GitHub + Actions endpoints. |
-| `dns-capture` | `true` | Route the resolver through a local logger to map connections to the **exact domains** the job resolved (more accurate than reverse DNS). Falls back to reverse DNS if unprivileged. |
+| `dns-capture` | `true` | Route the resolver through a local logger to map connections to the **exact domains** the job resolved (more accurate than reverse DNS). In block mode every non-root DNS query passes it and names off the allowlist are refused. Falls back to reverse DNS if unprivileged. |
 | `ebpf` | `auto` | `auto` uses the Rust/aya eBPF agent for socket-layer capture + process attribution (local binary, else a verified download of the latest release asset); `off` disables it. Falls back to the `/proc` sampler. |
 | `sample-interval` | `3` | Seconds between egress samples taken by the monitor. |
 | `policy-file` | `.legion/egress-allowed.txt` | Committed allowlist (learn then enforce). |
@@ -196,7 +196,7 @@ bare IPs is triagable without leaking infrastructure detail.
 | `file-integrity` | `auto` | Detect file tampering during the job (Rust `legionr-fim` agent): credential/config files, `.git` config + hooks, and checked-out source. `auto` or `off`. |
 | `fim-extra-paths` | `` | Extra files to watch for tampering (one per line / comma-separated). |
 | `job-summary` | `true` | Write the connections table to the job summary. Set `false` to keep monitoring and enforcement active but suppress the table. Useful when many jobs in one workflow each harden and you only want the summary once. |
-| `disable-sudo` | `false` | Revoke the runner user's sudo after setup. |
+| `disable-sudo` | `false` | Revoke the job user's sudo after setup, verified. Without it any later step can use sudo to undo block mode (the summary says so). Leave it off if later steps need sudo. |
 | `disable-telemetry` | `false` | Suppress lifecycle events (stay fully local). |
 | `legion-link` | `` | Stream egress events to a Legion desktop endpoint. |
 
@@ -204,8 +204,8 @@ The action core is pure Node + built-ins (no vendored `node_modules`). Capture
 degrades gracefully: the **eBPF agent** (socket-layer, process attribution) falls
 back to the **`/proc/net` sampler**, so it runs anywhere. The eBPF agent
 ([`agent/`](agent/)) is a separate Rust/aya crate, attached to each release and
-fetched on demand. Downloaded binaries are verified against a published `.sha256`
-checksum before they run.
+fetched on demand. The action runs only the build whose SHA-256 is committed in
+`action/agents.json`, from the release named there, never "latest".
 
 ### Enforce deny-by-default (self-contained, nothing to install)
 
@@ -242,6 +242,31 @@ apt mirrors) keep working without pinning addresses, while everything else is
 dropped. Allowlist entries match subdomains too (`github.com` allows
 `api.github.com`). Denied attempts are surfaced in the job summary (parsed from
 the firewall log) rather than dropped silently.
+
+### What block mode covers, and what it does not
+
+- **Host processes:** default-deny at the firewall; only allowlisted IPs, loopback
+  and established connections pass.
+- **Containers** (`docker run`, service containers): their traffic is forwarded,
+  not sent from the host, and is filtered by its own default-deny chain. Their
+  DNS always goes to the runner's real resolver, whatever server they ask.
+- **DNS:** with `dns-capture` (the default), every non-root lookup on the host
+  passes Legion's forwarder, including `dig @8.8.8.8` and systemd-resolved's own
+  queries. Names off the allowlist are answered REFUSED and never leave the
+  runner, so DNS cannot carry data out. Without `dns-capture`, and for
+  containers, DNS can only reach the configured resolver, but names are not
+  filtered.
+- **sudo:** a step with sudo can undo any of this. Set `disable-sudo: true` when
+  later steps do not need sudo; the action verifies the revocation, and a root
+  warden removes the firewall when the job ends so the runner still finalizes.
+  Either way the post step checks whether Legion's firewall, forwarder and agent
+  were changed during the job and says so in the summary.
+- **Evidence** (connection logs, DNS logs, the file-integrity baseline, the
+  agent binaries) lives in a root-only directory, `/run/legion`, written by root
+  processes, so a step cannot edit the record of what it did.
+- **Agents:** the eBPF and file-integrity agents run as root, so the action
+  runs only the builds whose SHA-256 is committed in `action/agents.json`.
+  Pinning the action to a tag or commit pins the agents too.
 
 > **Optional, for teams who want a reviewable allowlist in git:** set
 > `learn: true` in an audit run to also write `.legion/egress-allowed.txt`, which
