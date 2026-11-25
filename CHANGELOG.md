@@ -39,6 +39,9 @@ Unreleased section.
   went unnoticed. The action now downloads the release named in
   `action/agents.json` and runs a binary only if its SHA-256 matches the one
   committed there. `scripts/pin-agents.sh <tag>` regenerates the pins.
+- **Block mode fails closed.** If setting it up throws, the step now fails and
+  the job stops. Before, the error was a warning and every later step ran with
+  no enforcement while the job looked protected.
 - **Evidence is root-only.** Connection logs, DNS logs, the state file, DNS
   backups, the file-integrity baseline and the agent binaries now live in
   `/run/legion` (root, 0700), written by root processes. A step could edit them
@@ -61,6 +64,10 @@ Unreleased section.
   of building its own copy.
 
 ### Added
+- `scripts/action-smoke.sh` (and `precheck.sh --action`, and a CI step): runs
+  the action as a hosted runner does (non-root user, sudo with `use_pty`, a
+  `Runner.Worker` parent) in private namespaces, through block mode, DNS
+  capture, disable-sudo and the warden's teardown.
 - Enforce self-test jobs on GitHub-hosted runners: DNS refused off the allowlist
   (including via 1.1.1.1) and allow-by-domain after a resolved restart; block
   mode inside containers; `disable-sudo` revokes sudo, hides the evidence and
