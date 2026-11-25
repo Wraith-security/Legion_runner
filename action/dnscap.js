@@ -59,9 +59,16 @@ function portsFor(name, entries = ALLOW_ENTRIES) {
   return ports.length ? [...new Set(ports)] : null;
 }
 
-const server = dgram.createSocket("udp4");
+// Extra listen addresses (argv[8], comma-separated IPv4), e.g. the Docker
+// bridge gateway, so container DNS can be sent here too (see firewall.js).
+const EXTRA_BINDS = parseBinds(process.argv[8] || "");
 const client = dgram.createSocket("udp4");
-const inflight = new Map(); // query id -> { addr, port }
+// Forwarder-assigned id -> where the answer goes. The query is sent upstream
+// under our own id and the client's id is put back on the reply, so two
+// clients (the host and a container) using the same id never get each
+// other's answers.
+const inflight = new Map(); // our id -> { sock, addr, port, orig }
+let nextId = Math.floor(Math.random() * 0x10000);
 const allowed = new Set(); // IPs already inserted into the firewall
 
 // A name is allowed if it equals, or is a subdomain of, an allowlist entry.
@@ -92,6 +99,15 @@ function allowIp(ip, ports = null) {
     }
   }
   if (ok) allowed.add(key);
+}
+
+// Pure: valid IPv4 listen addresses from a comma-separated list.
+function parseBinds(csv) {
+  return csv
+    .split(",")
+    .map((s) => s.trim())
+    .filter((ip) => /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.test(ip) && ip.split(".").every((o) => +o <= 255))
+    .filter((ip) => ip !== "127.0.0.1");
 }
 
 // The question name of a DNS query, or "" if it cannot be read.
@@ -174,12 +190,13 @@ function extract(buf) {
 
 // Only bind/relay when run as a script; importing (for tests) is side-effect free.
 if (require.main === module) {
-  server.on("message", (msg, rinfo) => {
+  const onQuery = (sock, msg, rinfo) => {
+    if (msg.length < 12) return;
     if (ENFORCE) {
       const name = queryName(msg);
       if (!domainAllowed(name)) {
         const answer = refusedResponse(msg);
-        if (answer) server.send(answer, rinfo.port, rinfo.address);
+        if (answer) sock.send(answer, rinfo.port, rinfo.address);
         if (REFUSED_LOG && name) {
           try {
             fs.appendFileSync(REFUSED_LOG, name.toLowerCase() + "\n");
@@ -190,9 +207,12 @@ if (require.main === module) {
         return;
       }
     }
-    if (msg.length >= 2) inflight.set(msg.readUInt16BE(0), { addr: rinfo.address, port: rinfo.port });
-    client.send(msg, 53, upstream);
-  });
+    nextId = (nextId + 1) & 0xffff;
+    inflight.set(nextId, { sock, addr: rinfo.address, port: rinfo.port, orig: msg.readUInt16BE(0) });
+    const out = Buffer.from(msg);
+    out.writeUInt16BE(nextId, 0);
+    client.send(out, 53, upstream);
+  };
   client.on("message", (msg, rinfo) => {
     // Only trust replies from the real upstream. The client socket is otherwise
     // reachable by any local process, so an untrusted job could spray forged DNS
@@ -214,16 +234,24 @@ if (require.main === module) {
       /* logging is best-effort; never disrupt resolution */
     }
     if (msg.length >= 2) {
-      const dst = inflight.get(msg.readUInt16BE(0));
+      const id = msg.readUInt16BE(0);
+      const dst = inflight.get(id);
       if (dst) {
-        server.send(msg, dst.port, dst.addr);
-        inflight.delete(msg.readUInt16BE(0));
+        inflight.delete(id);
+        msg.writeUInt16BE(dst.orig, 0);
+        dst.sock.send(msg, dst.port, dst.addr);
       }
     }
   });
-  server.on("error", () => process.exit(1));
   client.on("error", () => {});
-  server.bind(port, "127.0.0.1");
+  for (const addr of ["127.0.0.1", ...EXTRA_BINDS]) {
+    const sock = dgram.createSocket("udp4");
+    sock.on("message", (msg, rinfo) => onQuery(sock, msg, rinfo));
+    // Loopback is the forwarder's reason to exist; an extra address failing to
+    // bind (the bridge went away) only loses that path.
+    sock.on("error", () => (addr === "127.0.0.1" ? process.exit(1) : sock.close()));
+    sock.bind(port, addr);
+  }
 }
 
-module.exports = { extract, readName, domainAllowed, queryName, refusedResponse, parseAllow, portsFor }; // for tests
+module.exports = { extract, readName, domainAllowed, queryName, refusedResponse, parseAllow, portsFor, parseBinds }; // for tests

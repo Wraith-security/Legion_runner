@@ -549,6 +549,13 @@ function defaultIface() {
   }
 }
 
+/// Pure: the IPv4 address of the Docker bridge from os.networkInterfaces()
+/// output ("" when there is no docker0).
+function dockerBridgeIp(ifaces = os.networkInterfaces()) {
+  const a = (ifaces.docker0 || []).find((x) => (x.family === "IPv4" || x.family === 4) && !x.internal);
+  return a ? a.address : "";
+}
+
 /// uid of a system user, or null.
 function uidOf(user) {
   try {
@@ -897,6 +904,9 @@ async function startDnsCapture(opts = {}) {
       opts.enforce ? "1" : "0",
       (opts.domains || []).join(","),
       out.refusedLog,
+      // Also listen on the Docker bridge so container DNS can go through the
+      // forwarder (allowlist and dynamic allows), not straight upstream.
+      opts.enforce ? dockerBridgeIp() : "",
       runTag(),
     ];
     // Bind :53 requires privilege → root directly, else sudo. Detached.
@@ -930,6 +940,14 @@ async function startDnsCapture(opts = {}) {
         firewall.applyDnsRedirect(privExec);
         out.redirect = true;
         info("   all non-root DNS on the host now passes the forwarder (names off the allowlist are refused)");
+        const bridge = dockerBridgeIp();
+        if (bridge) {
+          // Containers too: their DNS is sent to the forwarder on the bridge,
+          // so a rotating allowlisted host (github.com) works in a container.
+          firewall.setContainerDns(privExec, bridge);
+          out.containerDns = bridge;
+          info(`   container DNS goes through the forwarder too (${bridge})`);
+        }
       } catch (e) {
         warn(`could not redirect DNS to the forwarder (${e.message}); DNS names are not filtered`);
       }
@@ -1798,4 +1816,5 @@ module.exports = {
   GITHUB_EGRESS,
   defaultIfaceFromRoute,
   readPolicyEntries,
+  dockerBridgeIp,
 };

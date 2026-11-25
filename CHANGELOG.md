@@ -47,6 +47,14 @@ Unreleased section.
 - `scripts/precheck.sh` fails when build output (a `target/` directory) is
   tracked, and `/agent/target` is ignored. The eBPF workspace builds outside
   the root `/target`, so its output was not covered.
+- **Container DNS goes through the forwarder.** With container filtering,
+  containers resolved straight from the upstream resolver, so they only reached
+  the IPs seeded at startup; `github.com` rotates, and the cargo-deny container
+  could not clone the advisory database. The forwarder now also listens on the
+  Docker bridge and container DNS is sent there, so containers get the same
+  allow-by-domain and the same REFUSED as the host. The forwarder also forwards
+  under its own query id and restores the client's, so two clients using the
+  same id (the host and a container) never get each other's answers.
 - CI (the release gate) dogfoods the action from the commit under test
   (`uses: ./`) instead of the pinned v1.0.61. That old release still had the
   resolv.conf bug fixed above, so the gate kept failing on artifact uploads and
