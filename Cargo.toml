@@ -36,8 +36,10 @@ sha2               = "0.11"
 # unpatched RUSTSEC-2023-0071 Marvin advisory would trip `cargo audit`. aws_lc_rs
 # does its RSA in aws-lc, so no `rsa` crate enters the tree.
 jsonwebtoken       = { version = "11", default-features = false, features = ["use_pem", "aws_lc_rs"] }
-# datetime
-chrono             = { version = "0.4",  features = ["serde"] }
+# datetime. `time` rather than chrono: chrono is flagged unmaintained
+# (RUSTSEC-2026-0543), which cargo-deny fails on, and `time` is already in the
+# tree via jsonwebtoken -> simple_asn1, so this adds no new crate.
+time               = { version = "0.3",  features = ["formatting", "parsing"] }
 # error handling
 anyhow             = "1"
 thiserror          = "2"
