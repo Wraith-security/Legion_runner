@@ -471,7 +471,8 @@ async function startEbpf(connectLog, bin) {
     if (!alive) {
       const reason =
         (readEvidence(errLog).trim().split("\n").pop() || "agent exited on startup").slice(0, 300);
-      warn(`eBPF agent failed to start (${reason}); using the /proc sampler`);
+      const btf = ebpf.hasBtf() ? "" : "; this kernel has no BTF (/sys/kernel/btf/vmlinux)";
+      warn(`eBPF agent failed to start (${reason}${btf}); using the /proc sampler`);
       return out; // active stays false — the sampler covers capture
     }
     out.active = true;
@@ -1125,7 +1126,7 @@ async function main() {
   writeEvidence(logFile, "");
   const pid = startMonitor(logFile, interval);
 
-  // Preferred capture: eBPF (socket-layer, bypass-proof, with process names).
+  // Preferred capture: eBPF tracepoints on connect/sendto/sendmsg, with process names.
   // The /proc sampler above stays as a fallback when eBPF is unavailable.
   let ebpfCap = { active: false, log: "" };
   if (input("ebpf", "auto").toLowerCase() !== "off") {
@@ -1133,9 +1134,7 @@ async function main() {
     if (!bin) {
       // Say WHY the agent isn't available, so a silent sampler fallback is
       // diagnosable instead of looking like "eBPF just doesn't work".
-      if (!ebpf.hasBtf())
-        warn("eBPF unavailable: no kernel BTF (/sys/kernel/btf/vmlinux) on this runner; using the /proc sampler");
-      else if (process.platform !== "linux" || process.arch !== "x64")
+      if (process.platform !== "linux" || process.arch !== "x64")
         warn(
           `eBPF unavailable: no agent build for ${process.platform}/${process.arch} (the published legionr-bpf is x86_64 Linux); using the /proc sampler`,
         );

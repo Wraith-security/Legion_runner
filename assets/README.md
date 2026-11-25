@@ -4,7 +4,7 @@
 |------|-----|
 | `logo.jpg` | Canonical Legion brand mark (1254×1254). Use for avatars and the repo **social preview**. |
 | `logo.svg` | Scalable chevron mark in the brand palette (green/red on transparent). Use in docs/READMEs at any size. |
-| `banner.svg` | Wide header (1280×640) — wordmark + tagline. Good source for the social preview banner. |
+| `banner.svg` | Wide header (1280×640): wordmark + tagline. Good source for the social preview banner. |
 
 ## Palette
 

@@ -60,15 +60,15 @@
 
 <fieldset>
   <legend>Visibility</legend>
-  <label class="radio"><input type="radio" name="public" value="false" checked> Private — only your account/orgs can install it</label>
-  <label class="radio"><input type="radio" name="public" value="true"> Public — installable on any account (choose this to cover multiple orgs)</label>
+  <label class="radio"><input type="radio" name="public" value="false" checked> Private: only your account/orgs can install it</label>
+  <label class="radio"><input type="radio" name="public" value="true"> Public: installable on any account (choose this to cover multiple orgs)</label>
 </fieldset>
 
 <button id="create">Create the App on GitHub →</button>
 
 <p><small>
   App names are globally unique. If “Legion Runner” is taken, GitHub will ask
-  for another name — it doesn’t matter to the runner. After creating: generate a
+  for another name, it doesn’t matter to the runner. After creating: generate a
   private key, copy the App ID, and install the App. Then add
   <code>LEGION_E2E_APP_ID</code> / <code>LEGION_E2E_APP_PRIVATE_KEY</code> as
   repo secrets to enable the live e2e.

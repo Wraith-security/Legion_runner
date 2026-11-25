@@ -47,7 +47,8 @@ function binPath() {
   return agents.trustedLocal("legionr-bpf", "LEGIONR_BPF", __dirname);
 }
 
-// Kernel BTF is required for CO-RE load.
+// Whether the kernel exposes BTF. The agent does not use CO-RE, so this no
+// longer gates it; it is only a hint in the message when the agent fails to load.
 function hasBtf() {
   return fs.existsSync("/sys/kernel/btf/vmlinux");
 }
@@ -65,7 +66,6 @@ function tmpInstall(buf, name) {
 // release and SHA-256) in action/agents.json (x86_64 glibc Linux). Returns a
 // path or null; callers fall back to the /proc sampler on null.
 async function ensureBinary(opts = {}) {
-  if (!hasBtf()) return null;
   const local = binPath();
   if (local) return local;
   if (process.platform !== "linux" || process.arch !== "x64") return null;

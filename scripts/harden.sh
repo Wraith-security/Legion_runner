@@ -31,7 +31,7 @@ log() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[x]\033[0m %s\n' "$*" >&2; exit 1; }
 
 [ "$(id -u)" -eq 0 ] || die "run as root (sudo $0)"
-command -v legionr >/dev/null 2>&1 || die "legionr not on PATH — run scripts/install.sh first"
+command -v legionr >/dev/null 2>&1 || die "legionr not on PATH: run scripts/install.sh first"
 [ -f "$CONFIG" ] || die "config not found: $CONFIG (run: legionr provision ...)"
 
 # ── systemd unit + sysctl (generated and written by legionr) ─────────────────

@@ -102,7 +102,7 @@ PY
 
 # ── LOCAL tier ───────────────────────────────────────────────────────────────
 run_local() {
-    log "LOCAL tier — provision + harden against $SCOPE (no credentials)"
+    log "LOCAL tier: provision + harden against $SCOPE (no credentials)"
     provision_config
     [ -f "$CFG" ] || die "provision did not write a config"
     grep -q "\"kind\": \"repo\"\|\"kind\": \"org\"" "$CFG" || die "config missing scope"

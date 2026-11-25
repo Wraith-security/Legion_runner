@@ -1,19 +1,19 @@
 # Compliance Mapping
 
 Legion Runner's hardening is built to map onto recognized control frameworks.
-This is a reference, not a certification — but every control below is enforced
+This is a reference, not a certification, but every control below is enforced
 by code or generated configuration in this repository.
 
 ## NIST SP 800-53 (selected)
 
 | Control | Title | How Legion Runner satisfies it |
 |---------|-------|--------------------------------|
-| AC-6 | Least Privilege | Non-root `legionr` user; empty `CapabilityBoundingSet`; `NoNewPrivileges`. `run_as=root` is rejected at config validation. |
+| AC-6 | Least Privilege | Control plane as `legionr` with only `CAP_SETUID`/`CAP_SETGID`; jobs as `legionr-job` with no capabilities; `NoNewPrivileges`. Root, or one user for both, is rejected at config validation. |
 | AC-6(9/10) | Privileged function audit / non-privileged restriction | `SystemCallFilter` drops `@privileged`; `RestrictSUIDSGID`. |
-| SC-7 | Boundary Protection | nftables **default-deny** egress; only DNS + GitHub allowlist may leave the host. |
-| SC-39 | Process Isolation | `PrivateTmp`, `ProtectProc=invisible`, `ProcSubset=pid`, optional rootless container per job. |
+| SC-7 | Boundary Protection | nftables **default-deny** egress; only DNS to the host's resolvers and the GitHub allowlist may leave the host. |
+| SC-39 | Process Isolation | Jobs run as a separate user from the control plane; `PrivateTmp`, `ProtectProc=invisible`, `ProcSubset=pid`. |
 | SI-3 | Malicious Code Protection | Single-use runners + workspace wipe remove the persistence surface; pairs with Legion desktop YARA/IOC scanning. |
-| SI-14 | Non-Persistence | JIT credentials + `--ephemeral`; runner and `_work` destroyed after one job. |
+| SI-14 | Non-Persistence | JIT credentials; each job runs from a fresh copy of a read-only runner with its own HOME and TMP, and leftover processes are killed and everything is wiped after one job. |
 | CM-7 | Least Functionality | Minimal syscall surface; `ProtectKernelModules`; `unprivileged_bpf_disabled`. |
 | SR-3 / SR-11 | Supply Chain | `cargo-deny` (sources/advisories/bans), `cargo-audit`, pinned `Cargo.lock`, rustls. |
 | AU-2 | Audit Events | Lifecycle events (provision/start/finish/teardown) streamed to Legion desktop via the Legion link. |

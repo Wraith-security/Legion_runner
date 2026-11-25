@@ -8,7 +8,7 @@ deployment.
 ## Why it fits
 
 - **Ephemeral nodes match single-use runners.** A Tailscale ephemeral auth key
-  makes each host deregister from the tailnet when it goes offline — the same
+  makes each host deregister from the tailnet when it goes offline, the same
   lifecycle as provision -> one job -> exit -> fresh VM. No stale nodes.
 - **Management survives lockdown.** Legion's egress firewall is `policy drop`.
   With Tailscale as the management path, the firewall opens only the mesh, so a
@@ -16,7 +16,7 @@ deployment.
   Tailscale SSH.
 - **Zero inbound.** Tailscale is outbound-only to form the mesh, so the EC2
   security group needs **no** inbound SSH/bastion rule. Access is identity- and
-  ACL-gated via Tailscale SSH — no host SSH keys.
+  ACL-gated via Tailscale SSH, no host SSH keys.
 
 ## No Tailscale subscription required
 
@@ -26,7 +26,7 @@ use) a paid plan. You do **not** have to use it. This integration is optional
 
 - **Headscale (recommended for self-hosted / defense).** An open-source
   reimplementation of the Tailscale control server. Same `tailscale` client, same
-  WireGuard data plane, but **you** run the control plane — no third party in the
+  WireGuard data plane, but **you** run the control plane, no third party in the
   trust boundary, no subscription. Set `login_server` to your Headscale URL and
   everything below works unchanged (auth keys, tags, Tailscale SSH). This is the
   right fit for an air-gapped or sovereignty-sensitive deployment.
@@ -84,7 +84,7 @@ block leaves everything exactly as before):
 ```
 
 The ephemeral auth key is supplied at boot via the `TS_AUTHKEY` environment
-variable (from EC2 user-data / SSM Parameter Store / instance profile) — never
+variable (from EC2 user-data / SSM Parameter Store / instance profile), never
 committed to the config.
 
 ## 3. What `legionr harden` generates
@@ -107,7 +107,7 @@ chain output {
 ```
 
 `controlplane.tailscale.com` and `login.tailscale.com` are added to the resolved
-allow set so the coordination handshake (HTTPS/443) works — **443 is not
+allow set so the coordination handshake (HTTPS/443) works. **443 is not
 blanket-opened**, so default-deny stays meaningful for the job's own traffic.
 
 > **DERP relay caveat.** If direct WireGuard (UDP/41641) is blocked and Tailscale
@@ -126,13 +126,13 @@ tailscale up --auth-key="$TS_AUTHKEY" --hostname="$(hostname)" \
 
 (This is the argv `legionr` builds from the config; wiring it into the systemd
 bootstrap ordering after `tailscaled.service`, and the end-to-end proof that a
-provisioned VM serves a job and tears down, is tracked with the runner e2e job —
+provisioned VM serves a job and tears down, is tracked with the runner e2e job,
 issue #75.)
 
 ## 5. Access and teardown
 
 - **Access:** `tailscale ssh legionr@<hostname>` (or plain `ssh` over the
-  tailnet) — gated by the ACL above.
+  tailnet), gated by the ACL above.
 - **Teardown:** on exit the unit runs `tailscale logout`, deregistering the node;
   the ephemeral key means the tailnet also drops it automatically. Nothing
   survives to the next single-use VM.
