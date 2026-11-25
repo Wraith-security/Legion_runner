@@ -8,7 +8,7 @@ App**, not a personal access token:
 - **Short-lived tokens.** An installation token lasts ~1 hour and is minted on
   demand. Nothing long-lived sits on the runner host or in CI.
 - **Install once, everywhere.** Install the App on an org and every current and
-  future repo is covered — no per-repo PAT to rotate.
+  future repo is covered, no per-repo PAT to rotate.
 - **Least privilege.** The App carries exactly the runner-management permissions
   below and nothing else. A PAT with `repo`/`admin` is far broader.
 - **Auditable.** Actions taken by the App are attributed to it, not to a person.
@@ -41,13 +41,13 @@ App never needs to receive anything.
 ## Create it (two clicks)
 
 Open [`create-legion-runner-app.html`](./create-legion-runner-app.html) in a
-browser (double-click the file — it runs locally, sends nothing anywhere except
+browser (double-click the file: it runs locally and sends nothing anywhere except
 the GitHub form you submit). Pick the owner (your user or one of your orgs) and
 click **Create**. GitHub opens its App-creation page with **every permission
 above pre-filled** via an [App manifest][manifest]. Confirm and create.
 
 > App names are globally unique. If "Legion Runner" is taken, GitHub will ask
-> you to pick another (e.g. "Legion Runner — Wraith"). The name doesn't matter
+> you to pick another (e.g. "Legion Runner Wraith"). The name doesn't matter
 > to the runner; only the App ID and private key do.
 
 Prefer to do it by hand? Go to **Settings → Developer settings → GitHub Apps →
@@ -104,7 +104,7 @@ directly outside one.
 
 ### A production host (EC2 / systemd)
 
-`legionr` authenticates as the App **natively** — point it at the App ID and
+`legionr` authenticates as the App **natively**: point it at the App ID and
 private key and it mints (and, in the `run` loop, refreshes) its own
 installation tokens. No PAT, and no external token-minting helper on the host.
 
@@ -137,7 +137,7 @@ LEGIONR_APP_PRIVATE_KEY_FILE=/etc/legion-runner/app.pem
 LEGIONR_APP_INSTALLATION_ID=12345678
 ```
 
-Then provision and run as usual — no `LEGIONR_TOKEN` needed:
+Then provision and run as usual, no `LEGIONR_TOKEN` needed:
 
 ```sh
 legionr provision your-org/your-repo   # the probe mints a token to verify access
@@ -160,7 +160,7 @@ an environment rebuilt from a short allowlist, so no `LEGIONR_*` variable and no
 ## Security notes
 
 - The private key is the App's credential. Store it only as a secret
-  (`LEGION_*_PRIVATE_KEY`) or in a secrets manager — never in the repo or config.
+  (`LEGION_*_PRIVATE_KEY`) or in a secrets manager, never in the repo or config.
 - Installation tokens are automatically scoped to the repos/orgs the App is
   installed on and expire in about an hour. The runner never persists them and
   never passes them to a job: jobs run as a separate user with an allowlisted

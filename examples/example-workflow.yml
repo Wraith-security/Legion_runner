@@ -5,7 +5,7 @@
 # defaults from `legionr provision` (self-hosted, linux, legion, ephemeral).
 #
 # Because every Legion Runner is single-use, you get a clean machine for each
-# job automatically — no `actions/checkout` clean-up dance, no cache poisoning.
+# job automatically: no `actions/checkout` clean-up dance, no cache poisoning.
 
 name: CI (Legion Runner)
 

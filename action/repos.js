@@ -1,4 +1,4 @@
-// Legion Harden Runner — package-repository classification (dependency-free).
+// Legion Harden Runner: package-repository classification (dependency-free).
 //
 // Turns a resolved hostname (or, as a fallback, a bare IP) into a package
 // ecosystem + registry label, so the job summary can show *which* package
@@ -6,7 +6,7 @@
 // addresses. Pure + synchronous so it is fully unit-testable; no I/O here.
 //
 // Naming a registry reliably needs the *forward* name (the domain the job
-// resolved) — captured by dnscap.js. Reverse DNS can't do it: registries sit
+// resolved): captured by dnscap.js. Reverse DNS can't do it: registries sit
 // behind shared CDNs (Fastly/Cloudflare/…), whose PTR records name the CDN, not
 // the registry. So classifyByIp() only claims a CDN *provider* (honest, coarse),
 // never a specific registry, except for ranges that are unambiguous.
@@ -59,7 +59,7 @@ function classifyRepo(host) {
 // ── IP → CDN provider fallback ──────────────────────────────────────────────
 // Coarse, honest attribution for bare IPs that never got a forward name. We
 // only claim the CDN provider (a registry can't be inferred from a shared CDN
-// IP). Seed list — extend from the providers' published ranges as needed. The
+// IP). Seed list: extend from the providers' published ranges as needed. The
 // mechanism (cidrMatch) is the durable part; the table is data.
 const CDN_RANGES = [
   // GitHub (a subset of api.github.com/meta → web/api/git). Unambiguous → label
@@ -102,7 +102,7 @@ function cidrMatch(ip, cidr) {
 }
 
 // Classify a bare IP → { provider } (a CDN/host provider) or null. Never claims
-// a specific registry from a shared CDN range — that needs the forward name.
+// a specific registry from a shared CDN range, that needs the forward name.
 function classifyByIp(ip) {
   for (const [cidr, provider] of CDN_RANGES) {
     if (cidrMatch(ip, cidr)) return { provider };

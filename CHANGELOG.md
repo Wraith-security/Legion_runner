@@ -11,6 +11,33 @@ Unreleased section.
 
 ## [Unreleased]
 
+### Changed (docs and release)
+- **Docs match the code.** The README no longer calls the eBPF agent
+  "socket-layer" or "bypass-proof": it traces `connect`, `sendto` and
+  `sendmsg`, and does not see io_uring or `sendmmsg`. SECURITY.md and
+  COMPLIANCE.md describe the separate job user, the two capabilities the
+  control plane keeps, the per-job runner copy and the refused container mode.
+  `agent/README.md` lists the three tracepoints, the protocol lines and what
+  the agent cannot see.
+- **Minimum Rust is declared.** `rust-version = "1.88"` is set for every
+  crate, and the README says 1.88, not 1.78.
+- **No BTF gate on the eBPF agent.** The program reads user memory and needs
+  no kernel BTF, so the action no longer skips the agent on hosts without
+  `/sys/kernel/btf/vmlinux`. If it fails to load, the warning says why.
+- **Agents pinned to v1.2.0.** `action/agents.json` points at the v1.2.0
+  builds, which carry the UDP capture; the SHA-256 values match the release's
+  own sidecar files.
+- **Workflows use v1.2.0.** Every `Wraith-security/legion_runner@v1.0.61`
+  reference now reads `@v1.2.0`.
+- **No dashes.** Em and en dashes are gone from the docs, the changelog, code
+  comments and the CLI's help and output.
+- **The eBPF smoke test connects to a literal IP.** Under v1.2.0's block mode
+  a lookup of `example.com` is refused, so curl never reached `connect()`.
+- **The precheck checks every tracked file for dashes**, not only added
+  lines, so none come back.
+
+## [1.2.0] - 2026-11-25
+
 ### Changed (Medium findings)
 - **eBPF capture sees UDP sent to an address.** The agent hooked only
   `connect()`, so unconnected UDP (DNS, QUIC) was invisible. It now also hooks
@@ -216,18 +243,18 @@ never closed after each release, so earlier releases reused these notes.
   endpoints. e.g. `allowed-presets: "cargo, apt"`. Unit-tested.
 - **Download integrity verification**: the action verifies the `legionr-bpf` /
   `legionr-fim` release binaries against a `.sha256` sidecar before running them
-  (the release now attaches the checksums), and **fails closed** — an
+  (the release now attaches the checksums), and **fails closed**: an
   unverified/corrupted/tampered download is rejected and the action degrades
   instead of executing it.
 - **`learned-baseline` input** (default `true`): in block mode, also allow
   destinations previously learned into the Actions cache. Set `false` to enforce
   ONLY the explicit allowlist (inline + policy-file + GitHub) with no cache
-  read/write — used by the enforce self-test for deterministic deny.
+  read/write, used by the enforce self-test for deterministic deny.
 - **File-integrity / tamper detection (Rust `legionr-fim` agent)**: snapshots
   high-value tamper targets at job start (credential/config files, `.git`
   config + hooks, and checked-out source) and diffs them at job end, surfacing
   anything overwritten, deleted, or chmod'd in the summary. Only sha256 hashes
-  are stored — never contents. New inputs `file-integrity` (auto|off) and
+  are stored, never contents. New inputs `file-integrity` (auto|off) and
   `fim-extra-paths`. `file-integrity: auto` downloads the agent from the latest
   release (plain stable Rust, no eBPF toolchain) and degrades to a silent skip
   if unavailable. Logic lives in `legionr-core::fim` (unit-tested); the binary
@@ -235,16 +262,16 @@ never closed after each release, so earlier releases reused these notes.
 - **Package repositories roll-up (`📦`)**: the summary now classifies named
   outbound destinations into their ecosystem/registry (npm, PyPI, crates.io,
   apt, Docker, Go, NuGet, Maven, Gradle, RubyGems, Alpine, GitHub) and shows a
-  **Package repositories reached** table — registry, ecosystem, connections, and
+  **Package repositories reached** table: registry, ecosystem, connections, and
   the process that reached each. Supply-chain risk hides in *which* registries a
   build talks to, so we surface them directly instead of leaving you to read
   IPs. Bare IPs that never got a forward name get a coarse CDN/provider hint
-  (Fastly/Cloudflare/GitHub) via CIDR match — honest about ambiguity (a shared
+  (Fastly/Cloudflare/GitHub) via CIDR match, honest about ambiguity (a shared
   CDN can't name a registry). Logic in `action/repos.js`, fully unit-tested.
 - **Combined cross-job egress report (one summary for the whole run)**: GitHub
   has no run-level summary, so each job emits its captured egress as a JSON
   artifact (`node action/report.js emit`) and a final `egress-report` job merges
-  them into a SINGLE table — which job + process reached what — with a package
+  them into a SINGLE table (which job and process reached what) with a package
   repositories roll-up and a per-job diagnostics block (`render`). Wired into CI;
   `render` is pure and unit-tested. Pairs with `job-summary: false` so the run
   shows one combined summary instead of one table per job.
@@ -255,7 +282,7 @@ never closed after each release, so earlier releases reused these notes.
 - **Secure diagnostics line** in the summary: reports which resolution path
   actually fired (`forwarder on/off · captured DNS records N · getaddrinfo route
   … · named X/Y destinations`) so a run that comes back as bare IPs is triagable.
-  Secure by construction — only booleans, counts, and a fixed enum; never the
+  Secure by construction: only booleans, counts, and a fixed enum; never the
   upstream resolver IP, file paths, captured hostnames, or env values.
 
 ### Changed
@@ -284,7 +311,7 @@ never closed after each release, so earlier releases reused these notes.
   not in the static seed) was dropped and the job spun until timeout. `post()`
   now tears the firewall down (`removeEgressBlock`).
 - **Runner hang from leaked daemons.** The post step left privileged background
-  processes alive — eBPF agent, DNS forwarder — and the `/proc` monitor could
+  processes alive (eBPF agent, DNS forwarder) and the `/proc` monitor could
   wedge in a blocking `ss` subprocess. The monitor now reads `/proc/net/tcp`
   directly (no subprocess); daemons are reliably reaped.
 - **No more spurious "could not resolve" annotations.** Allowlist entries that
@@ -302,7 +329,7 @@ never closed after each release, so earlier releases reused these notes.
   targets the *real* upstream (systemd-resolved's actual servers, not the
   `127.0.0.53` stub), and when the bypass is detected but the nsswitch reroute
   fails, Legion redirects systemd-resolved itself at the forwarder via a
-  `resolved.conf.d` drop-in — **verify-or-revert** and restored on teardown, so
+  `resolved.conf.d` drop-in, **verify-or-revert** and restored on teardown, so
   it never breaks the job's DNS.
 - **IPv4-mapped IPv6 destinations rendered as long expanded addresses**
   (`0000:0000:0000:0000:0000:ffff:HHHH:HHHH`) in the summary. The `/proc` sampler
@@ -313,7 +340,7 @@ never closed after each release, so earlier releases reused these notes.
 
 ### Reliability
 - **Tests for the paths that kept breaking**: the firewall rule builders
-  (`egressBlockRules`/`egressUnblockRules` — order, DNS-allow, DROP-last,
+  (`egressBlockRules`/`egressUnblockRules`: order, DNS-allow, DROP-last,
   OUTPUT-jump-removed-first), the checksum parser, the curated presets, and a
   **full-stack PR gate** that runs block + DNS-capture + eBPF and asserts the
   job finalizes (catches any teardown-hang regression), plus the package-repo
@@ -325,25 +352,25 @@ never closed after each release, so earlier releases reused these notes.
 - **Name more destinations**: route glibc `getaddrinfo` (curl/apt/cargo/git)
   through the DNS-capture forwarder via an `nsswitch.conf` reroute, so hosts
   resolved by systemd-resolved (which ignores `resolv.conf`) are now captured
-  and named — not just `resolv.conf`/c-ares callers. Health-checked and restored
-  on teardown. (A connection to a hard-coded IP with no PTR still shows the IP —
+  and named, not just `resolv.conf`/c-ares callers. Health-checked and restored
+  on teardown. (A connection to a hard-coded IP with no PTR still shows the IP:
   there is no name to resolve.)
 - More accurate "unresolved destination" note in the summary (a name may have
   been resolved outside the capture path, vs. a genuine raw-IP connection).
 - **We dogfood our own action.** Every real-work job in this repo (CI, release,
   eBPF agent, FIM self-test) now runs Legion Runner as its first step (`@v1`,
-  audit) — our CI is hardened by the product it ships.
+  audit), our CI is hardened by the product it ships.
 - **Docs-only PRs skip the build/test matrix** (and the release it gates) via
   `paths-ignore`; a `docs-passthrough` workflow reports the same check names
   green so required checks stay satisfied and README edits stay mergeable
   without burning CI minutes.
 - **Our CI now captures names.** The dogfooded harden steps run with
-  `dns-capture: true` (still `audit` — monitor, don't firewall), so job summaries
+  `dns-capture: true` (still `audit`: monitor, don't firewall), so job summaries
   show real destination and package-repository names instead of bare IPs, and the
   capture path is exercised on every run. Safe now that `@v1` (>= 1.0.35) carries
   the teardown + systemd-resolved fixes.
 
-## [1.0.14] — Legion Runner platform
+## [1.0.14] - Legion Runner platform
 
 First feature release of the full Legion Runner platform: the hardened ephemeral
 runner, the Harden Runner action (audit/block egress with eBPF capture), and the
@@ -365,7 +392,7 @@ release automation.
 **Legion Harden Runner action (dependency-free Node 24, main + post)**
 - **Audit**: monitors outbound connections and prints them as a markdown table
   in the job summary, named via DNS-capture → forward allowlist → reverse-DNS.
-- **Block**: default-deny egress with **dynamic allow-by-domain** — an
+- **Block**: default-deny egress with **dynamic allow-by-domain**: an
   allowlisted domain's current IPs are opened just-in-time as it resolves, so
   CDN/cloud endpoints that rotate IPs keep working without pinning addresses.
   Subdomain matching included.
@@ -374,8 +401,8 @@ release automation.
   file and no extra workflow. An optional committed `.legion/egress-allowed.txt`
   is supported for teams who want a reviewable allowlist.
 - **eBPF capture (Rust/aya)**: the `legionr-bpf` agent (tracepoint on
-  `sys_enter_connect`) captures connections at the socket layer — bypass-proof
-  (nss-resolve/systemd-resolved can't evade it) — and adds **process
+  `sys_enter_connect`) captures connections at the socket layer, bypass-proof
+  (nss-resolve/systemd-resolved can't evade it), and adds **process
   attribution** (PID + comm). `ebpf: auto` uses a local binary or best-effort
   downloads the agent from the latest release; falls back to the `ss`/`/proc`
   sampler when unavailable.

@@ -1,5 +1,5 @@
 // Tests for the cross-job egress report renderer (action/report.js).
-// Run with: node --test action/   (Node's built-in runner — no deps).
+// Run with: node --test action/   (Node's built-in runner, no deps).
 
 "use strict";
 

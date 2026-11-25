@@ -1,4 +1,4 @@
-# cargo-deny configuration — supply-chain controls for Legion Runner.
+# cargo-deny configuration: supply-chain controls for Legion Runner.
 # Run locally with: cargo deny check advisories bans sources
 
 [advisories]

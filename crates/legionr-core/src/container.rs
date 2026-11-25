@@ -1,7 +1,7 @@
 //! Container sandbox backend.
 //!
 //! When enabled, each job's runner process executes inside a rootless,
-//! throwaway container — kernel-namespace isolation layered on top of the
+//! throwaway container: kernel-namespace isolation layered on top of the
 //! ephemeral-runner guarantee. The flags here are deliberately strict: dropped
 //! capabilities, no privilege escalation, read-only root, a tmpfs work mount,
 //! and a pids cap to blunt fork-bomb DoS.
@@ -15,7 +15,7 @@ pub enum ContainerBackend {
     /// No container; the runner runs directly under the hardened systemd unit.
     #[default]
     None,
-    /// Rootless Podman (preferred — daemonless, runs unprivileged).
+    /// Rootless Podman (preferred: daemonless, runs unprivileged).
     Podman,
     /// Docker (requires access to the daemon socket).
     Docker,

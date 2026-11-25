@@ -262,7 +262,7 @@ fn hostname() -> String {
         .unwrap_or_else(|| "host".into())
 }
 
-/// Short, time-seeded id for unique runner names. Not security-sensitive — the
+/// Short, time-seeded id for unique runner names. Not security-sensitive, the
 /// JIT config GitHub issues is the real credential; this is just a label.
 fn short_id() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};

@@ -2,7 +2,7 @@ version: 2
 
 # Tool pack: one place Dependabot watches every toolchain surface in the repo.
 # The agent/ eBPF crate is its OWN Cargo workspace (excluded from the root
-# workspace), so it needs its own entry — the root cargo job can't see it.
+# workspace), so it needs its own entry, the root cargo job can't see it.
 #
 # Each ecosystem:
 #   * cooldown 7 days. Wait 7 days after a release before opening a PR, so

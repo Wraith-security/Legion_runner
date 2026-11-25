@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Legion Runner — end-to-end lifecycle harness.
+# Legion Runner: end-to-end lifecycle harness.
 #
 # Closes the "CI only runs unit tests" gap: this actually drives the real
 # control-plane binary through install -> provision -> harden -> (serve one
@@ -102,7 +102,7 @@ PY
 
 # ── LOCAL tier ───────────────────────────────────────────────────────────────
 run_local() {
-    log "LOCAL tier — provision + harden against $SCOPE (no credentials)"
+    log "LOCAL tier: provision + harden against $SCOPE (no credentials)"
     provision_config
     [ -f "$CFG" ] || die "provision did not write a config"
     grep -q "\"kind\": \"repo\"\|\"kind\": \"org\"" "$CFG" || die "config missing scope"

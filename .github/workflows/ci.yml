@@ -48,7 +48,7 @@ jobs:
           persist-credentials: false
 
       - name: Harden runner (Legion, BLOCK)
-        uses: Wraith-security/legion_runner@v1.0.61   # Marketplace action
+        uses: Wraith-security/legion_runner@v1.2.0   # Marketplace action
         with:
           # Default-deny egress: a malicious build.rs / proc-macro that tries to
           # phone home during fmt/clippy/test/build is dropped and named. The

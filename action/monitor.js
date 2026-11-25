@@ -1,7 +1,7 @@
-// Legion Runner — egress sampler (detached background process).
+// Legion Runner: egress sampler (detached background process).
 //
 // Appends the peer address of every established socket to a log file on an
-// interval, by decoding /proc/net/tcp{,6} directly — a pure file read, no
+// interval, by decoding /proc/net/tcp{,6} directly, a pure file read, no
 // subprocess. (Earlier versions shelled out to `ss`; a blocking `ss` call could
 // wedge mid-syscall and ignore signals, orphaning the process and hanging the
 // runner at teardown. Reading /proc avoids that entirely and needs no iproute2.)
@@ -26,7 +26,7 @@ function hexIpv6(h) {
     words.push([6, 4, 2, 0].map((j) => w.substr(j, 2)).join(""));
   }
   const flat = words.join("");
-  // IPv4-mapped IPv6 (::ffff:a.b.c.d) — what /proc/net/tcp6 reports for a socket
+  // IPv4-mapped IPv6 (::ffff:a.b.c.d), what /proc/net/tcp6 reports for a socket
   // to an IPv4 service (common on hosted runners). Collapse to dotted IPv4 so it
   // renders as a real address and dedupes with the v4 table, instead of a long
   // 0000:0000:...:ffff:HHHH:HHHH string.

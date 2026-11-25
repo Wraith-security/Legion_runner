@@ -1,4 +1,4 @@
-//! Legion Runner — command-line control plane (`legionr`).
+//! Legion Runner: command-line control plane (`legionr`).
 //!
 //! Subcommands:
 //!   provision <SCOPE>   Write a hardened runner config for a repo/org.
@@ -30,7 +30,7 @@ use legionr_core::{data_dir, RunnerConfig, VERSION};
 #[derive(Parser)]
 #[command(
     name = "legionr",
-    about = "Legion Runner – hardened, ephemeral, single-use GitHub Actions runner",
+    about = "Legion Runner: hardened, ephemeral, single-use GitHub Actions runner",
     long_about = None,
     version
 )]
@@ -223,7 +223,7 @@ fn load_config(explicit: Option<PathBuf>) -> Result<RunnerConfig> {
     let path = config_path(explicit);
     RunnerConfig::load(&path).with_context(|| {
         format!(
-            "no usable config at {} — run `legionr provision <owner/repo>` first",
+            "no usable config at {}: run `legionr provision <owner/repo>` first",
             path.display()
         )
     })
@@ -373,7 +373,7 @@ fn harden(config: Option<PathBuf>, install: bool, instance: &str, refresh: bool)
         return Ok(());
     }
 
-    // #71: never install a default-deny firewall with EMPTY allow sets — that
+    // #71: never install a default-deny firewall with EMPTY allow sets, that
     // takes the host off the network, the operator's management path included.
     // Resolve the allowlist, refuse if nothing resolved, and write POPULATED sets.
     let (v4, v6) = resolve_allow_ips(&profile.egress_hosts());
@@ -509,9 +509,9 @@ async fn status(config: Option<PathBuf>) -> Result<()> {
     match GitHubClient::from_env_for_scope(&cfg.scope).await {
         Ok(gh) => match gh.probe().await {
             Ok(()) => println!("reachable, token OK"),
-            Err(e) => println!("error — {e}"),
+            Err(e) => println!("error: {e}"),
         },
-        Err(e) => println!("no credential — {e}"),
+        Err(e) => println!("no credential: {e}"),
     }
     Ok(())
 }
@@ -525,7 +525,7 @@ async fn doctor(config: Option<PathBuf>) -> Result<()> {
         if pass {
             println!("✔ {label}");
         } else {
-            println!("✗ {label} — {hint}");
+            println!("✗ {label}: {hint}");
             *ok = false;
         }
     };
@@ -584,11 +584,13 @@ async fn doctor(config: Option<PathBuf>) -> Result<()> {
                 }
             }
             Ok(_) => {
-                println!("  ✗ the App is not installed anywhere — open the App page → Install App");
+                println!(
+                    "  ✗ the App is not installed anywhere: open the App page, then Install App"
+                );
                 ok = false;
             }
             Err(e) => {
-                println!("  ✗ could not list installations — {e}");
+                println!("  ✗ could not list installations: {e}");
                 ok = false;
             }
         }
@@ -597,20 +599,20 @@ async fn doctor(config: Option<PathBuf>) -> Result<()> {
         match &report.token {
             Ok(()) => println!("  ✔ minted an installation token for {scope_url}"),
             Err(e) => {
-                println!("  ✗ could not mint a token for {scope_url} — {e}");
+                println!("  ✗ could not mint a token for {scope_url}: {e}");
                 ok = false;
             }
         }
     }
 
     if ok {
-        println!("\nAll checks passed — ready to `legionr run`.");
+        println!("\nAll checks passed: ready to `legionr run`.");
         Ok(())
     } else {
-        // A failed preflight is an expected, actionable result — report it
+        // A failed preflight is an expected, actionable result, report it
         // concisely and exit non-zero, without an error backtrace.
         println!(
-            "\nPreflight checks failed — resolve the ✗ items above, then re-run `legionr doctor`."
+            "\nPreflight checks failed: resolve the ✗ items above, then re-run `legionr doctor`."
         );
         std::process::exit(1);
     }

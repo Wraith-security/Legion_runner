@@ -1,12 +1,11 @@
-// Legion Harden Runner — eBPF capture launcher (JS side).
+// Legion Harden Runner: eBPF capture launcher (JS side).
 //
 // The eBPF program itself is a Rust/aya agent (`legionr-bpf`, see
-// crates/legionr-bpf): a tracepoint on sys_enter_connect that prints one
-// "LEGIONC <ip> <port> <pid> <comm>" line per outbound connection — socket-layer
-// capture that nss-resolve / systemd-resolved cannot bypass, with process
-// attribution. This module only locates and parses that agent's output; the
-// action spawns it privileged. Falls back to the /proc sampler when the
-// agent or kernel BTF is unavailable, so there is never a regression.
+// agent/): tracepoints on connect, sendto and sendmsg that print one
+// "LEGIONC"/"LEGIONU" line per destination with the caller's pid and name, so
+// a custom resolver or a hard-coded IP is still seen. This module only locates
+// and parses that agent's output; the action spawns it privileged. Falls back
+// to the /proc sampler when the agent is unavailable or fails to load.
 
 "use strict";
 
@@ -47,7 +46,8 @@ function binPath() {
   return agents.trustedLocal("legionr-bpf", "LEGIONR_BPF", __dirname);
 }
 
-// Kernel BTF is required for CO-RE load.
+// Whether the kernel exposes BTF. The agent does not use CO-RE, so this no
+// longer gates it; it is only a hint in the message when the agent fails to load.
 function hasBtf() {
   return fs.existsSync("/sys/kernel/btf/vmlinux");
 }
@@ -65,7 +65,6 @@ function tmpInstall(buf, name) {
 // release and SHA-256) in action/agents.json (x86_64 glibc Linux). Returns a
 // path or null; callers fall back to the /proc sampler on null.
 async function ensureBinary(opts = {}) {
-  if (!hasBtf()) return null;
   const local = binPath();
   if (local) return local;
   if (process.platform !== "linux" || process.arch !== "x64") return null;

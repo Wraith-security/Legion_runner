@@ -1,4 +1,4 @@
-// Legion Harden Runner — GitHub Action (main + post), dependency-free.
+// Legion Harden Runner: GitHub Action (main + post), dependency-free.
 //
 // main():  starts an egress monitor, optionally enforces a default-deny egress
 //          allowlist (block mode), and emits a "job started" event.
@@ -289,7 +289,7 @@ function normalizeIp(ip) {
   const low = ip.toLowerCase().replace(/^\[|\]$/g, "");
   // Compressed IPv4-mapped IPv6: ::ffff:1.2.3.4 -> 1.2.3.4
   if (low.startsWith("::ffff:") && low.includes(".")) return ip.replace(/^\[|\]$/g, "").slice(7);
-  // Expanded IPv4-mapped IPv6 (0:0:0:0:0:ffff:HHHH:HHHH) — as /proc or the eBPF
+  // Expanded IPv4-mapped IPv6 (0:0:0:0:0:ffff:HHHH:HHHH), as /proc or the eBPF
   // agent can emit it. Collapse the trailing two hextets to dotted IPv4.
   const m = low.match(/^(?:0{1,4}:){5}ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
   if (m) {
@@ -331,7 +331,7 @@ async function resolveAll(hosts) {
       }
     } catch {
       // Benign and expected for wildcard parents (e.g. blob.core.windows.net,
-      // actions.githubusercontent.com) that have no A record of their own — only
+      // actions.githubusercontent.com) that have no A record of their own, only
       // their subdomains resolve. Connections are still observed via PTR /
       // dns-capture, and block mode opens IPs just-in-time as names resolve. Note
       // it as plain info, not a ::warning:: annotation (which is just CI noise).
@@ -399,7 +399,7 @@ function baselineFrom(rows) {
 
 // ── Cross-run baseline persistence (Actions cache) ──────────────────────────
 // Lets a consumer learn in audit and enforce in block with zero extra files or
-// workflows — the baseline rides in the Actions cache, inside the action.
+// workflows: the baseline rides in the Actions cache, inside the action.
 function cacheKeys() {
   const ref = (process.env.GITHUB_REF_NAME || "default").replace(/[^A-Za-z0-9._-]/g, "-");
   const base = `legion-egress-${ref}`;
@@ -471,8 +471,9 @@ async function startEbpf(connectLog, bin) {
     if (!alive) {
       const reason =
         (readEvidence(errLog).trim().split("\n").pop() || "agent exited on startup").slice(0, 300);
-      warn(`eBPF agent failed to start (${reason}); using the /proc sampler`);
-      return out; // active stays false — the sampler covers capture
+      const btf = ebpf.hasBtf() ? "" : "; this kernel has no BTF (/sys/kernel/btf/vmlinux)";
+      warn(`eBPF agent failed to start (${reason}${btf}); using the /proc sampler`);
+      return out; // active stays false, the sampler covers capture
     }
     out.active = true;
     info("   eBPF capture active (legionr-bpf: tracepoints on connect, sendto and sendmsg)");
@@ -768,7 +769,7 @@ function currentUpstream() {
 /// The *real* (non-loopback) upstream resolver, read from systemd-resolved's
 /// generated file first (which lists the actual servers, not the 127.0.0.53
 /// stub), then /etc/resolv.conf. Returns null when only loopback/stub servers
-/// are configured — in which case redirecting systemd-resolved at our forwarder
+/// are configured, in which case redirecting systemd-resolved at our forwarder
 /// would loop, so the caller must not do it. Used to point the forwarder at the
 /// true upstream so capture works regardless of the stub.
 function realUpstream() {
@@ -790,12 +791,12 @@ function realUpstream() {
 }
 
 /// On runners where glibc getaddrinfo resolves via systemd-resolved's stub
-/// (127.0.0.53), rewriting /etc/resolv.conf isn't enough — resolved owns those
+/// (127.0.0.53), rewriting /etc/resolv.conf isn't enough, resolved owns those
 /// lookups and ignores it, so package-repo names never reach the capture
 /// forwarder (the job's connections then show as bare IPs). Point resolved
 /// itself at the forwarder via a drop-in, restart it, and VERIFY getaddrinfo
 /// still resolves; revert on any failure so we never break the job's DNS.
-/// Requires a real upstream (else a redirect would loop) — guarded by caller.
+/// Requires a real upstream (else a redirect would loop), guarded by caller.
 function redirectSystemdResolved(out, upstream) {
   try {
     if (!fs.existsSync("/run/systemd/resolve")) return; // resolved not in use
@@ -850,7 +851,7 @@ async function resolvesVia(server) {
 }
 
 /// Can glibc getaddrinfo() resolve a name? (Validates an nsswitch reroute,
-/// since that path — unlike `resolvesVia` — goes through nss.)
+/// since that path, unlike `resolvesVia`, goes through nss.)
 async function resolvesViaGetaddrinfo() {
   try {
     await Promise.race([
@@ -881,7 +882,7 @@ async function rerouteNsswitch(out) {
       out.nsswitchBackup = backup;
       info("   routed getaddrinfo through the capture forwarder (nsswitch)");
     } else {
-      sudo(["cp", backup, "/etc/nsswitch.conf"]); // revert — don't break resolution
+      sudo(["cp", backup, "/etc/nsswitch.conf"]); // revert, don't break resolution
       warn("nsswitch reroute reverted (getaddrinfo check failed); some hosts may stay unnamed");
     }
   } catch (e) {
@@ -999,7 +1000,7 @@ function killDnsForwarder(pid, token) {
   }
   try {
     // Bracket the first char ([d]nscap.js) so the pkill/sudo command line itself
-    // doesn't match the pattern — otherwise pkill races to kill its own sudo
+    // doesn't match the pattern: otherwise pkill races to kill its own sudo
     // parent and can leave the root forwarder alive, hanging the runner. -9 to
     // be sure (resolv.conf/nsswitch are restored separately).
     sudo(["pkill", "-9", "-f", warden.daemonPattern("dnscap.js", token)]);
@@ -1050,7 +1051,7 @@ function stopDnsCapture(dns, token) {
 }
 
 /// Stop the eBPF capture agent; best-effort. The agent runs as root (via sudo),
-/// so signalling the launcher pid may not reach the real process — ALWAYS also
+/// so signalling the launcher pid may not reach the real process, ALWAYS also
 /// pkill it by name (the binary is `legionr-bpf`, not bpftrace). A leaked root
 /// agent keeps the hosted runner from finalizing the job ("Complete job" hangs).
 // Kill the eBPF agent by NAME (needs no state). Bracket the first char so pkill
@@ -1089,11 +1090,11 @@ async function main() {
   const learn = boolInput("learn", false);
   // Whether block mode also allows the destinations previously learned into the
   // Actions cache (the zero-config learn→enforce baseline). Off = enforce ONLY
-  // the explicit allowlist (inline + file + GitHub), with no cache read/write —
+  // the explicit allowlist (inline + file + GitHub), with no cache read/write,
   // used by the enforce self-test so its deny case is deterministic.
   const useLearned = boolInput("learned-baseline", true);
   // Whether post() writes the connections table to the job summary. Off keeps
-  // monitoring/enforcement fully active but suppresses the markdown — useful when
+  // monitoring/enforcement fully active but suppresses the markdown, useful when
   // many jobs in a workflow each harden and you only want the table once.
   const jobSummary = boolInput("job-summary", true);
   const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
@@ -1159,7 +1160,7 @@ async function main() {
   writeEvidence(logFile, "");
   const pid = startMonitor(logFile, interval);
 
-  // Preferred capture: eBPF (socket-layer, bypass-proof, with process names).
+  // Preferred capture: eBPF tracepoints on connect/sendto/sendmsg, with process names.
   // The /proc sampler above stays as a fallback when eBPF is unavailable.
   let ebpfCap = { active: false, log: "" };
   if (input("ebpf", "auto").toLowerCase() !== "off") {
@@ -1167,9 +1168,7 @@ async function main() {
     if (!bin) {
       // Say WHY the agent isn't available, so a silent sampler fallback is
       // diagnosable instead of looking like "eBPF just doesn't work".
-      if (!ebpf.hasBtf())
-        warn("eBPF unavailable: no kernel BTF (/sys/kernel/btf/vmlinux) on this runner; using the /proc sampler");
-      else if (process.platform !== "linux" || process.arch !== "x64")
+      if (process.platform !== "linux" || process.arch !== "x64")
         warn(
           `eBPF unavailable: no agent build for ${process.platform}/${process.arch} (the published legionr-bpf is x86_64 Linux); using the /proc sampler`,
         );
@@ -1233,7 +1232,7 @@ async function main() {
   }
 
   // DNS capture: routes the resolver through a local logger so connections map
-  // to exact domains. In block mode it ALSO enforces by domain — opening the
+  // to exact domains. In block mode it ALSO enforces by domain, opening the
   // firewall for an allowlisted domain's IPs as they resolve (survives CDN/IP
   // rotation), so the static seed above is just the head start.
   let dnsCap = { active: false, log: "", backup: "" };
@@ -1406,7 +1405,7 @@ async function post() {
   }
 
   // Resolve hostnames, best source first:
-  //   1. DNS capture — the exact domains the job resolved (most accurate)
+  //   1. DNS capture: the exact domains the job resolved (most accurate)
   //   2. forward allowlist map (GitHub/operator endpoints)
   //   3. reverse DNS (PTR) for anything still unnamed
   const dnsMap = st.dns && st.dns.log ? readDnsMap(st.dns.log, readEvidence) : {};
@@ -1463,9 +1462,9 @@ async function post() {
   md += `**Resolution:** ${captureMode}  ·  `;
   md += `**Started:** ${st.startedAt}\n\n`;
 
-  // Diagnostics line — shows which resolution path actually fired so a run can
+  // Diagnostics line: shows which resolution path actually fired so a run can
   // be triaged when names come back as bare IPs. SECURE BY CONSTRUCTION: emits
-  // only booleans, counts, and a fixed enum — never the upstream resolver IP,
+  // only booleans, counts, and a fixed enum, never the upstream resolver IP,
   // file paths, captured hostnames, or any env value. (The upstream IP isn't
   // even persisted to state, so it can't leak here.)
   const dnsActive = !!(st.dns && st.dns.active);
@@ -1612,7 +1611,7 @@ async function post() {
   // enforce it with no committed file or extra workflow. Best-effort.
   //
   // The baseline is every domain the job *resolved* (the DNS-capture log) plus
-  // any raw-IP destinations — NOT just sampled sockets. Short-lived connections
+  // any raw-IP destinations: NOT just sampled sockets. Short-lived connections
   // can slip between samples, but their DNS lookup is always recorded, so this
   // is the reliable signal of what the job legitimately needs.
   const observed = [
@@ -1621,7 +1620,7 @@ async function post() {
     .filter(Boolean)
     .sort();
   // Skip when learned-baseline is off (e.g. the enforce self-test) so the run
-  // neither reads nor writes the shared cache — keeping it fully hermetic.
+  // neither reads nor writes the shared cache, keeping it fully hermetic.
   if (observed.length && st.useLearned !== false) {
     const prev = await cacheRestoreDomains();
     const merged = [...new Set([...prev, ...observed])].sort();

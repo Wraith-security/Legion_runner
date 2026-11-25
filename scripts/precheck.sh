@@ -78,21 +78,16 @@ tracked="$(git ls-files | grep -E '(^|/)target/' | head -5 || true)"
 [ -z "$tracked" ] || { echo "$tracked"; die "build output is tracked (a target/ directory); git rm -r --cached it and ignore it"; }
 ok "no target/ directory in git"
 
-step "House style: no em or en dashes in added lines"
-if git rev-parse -q --verify "$BASE" >/dev/null; then
-    # Added lines only, so existing text is cleaned up deliberately, not
-    # forced into every unrelated change.
-    added="$(git diff "$BASE" --unified=0 --no-color -- . ':(exclude)Cargo.lock' \
-             | grep -E '^\+[^+]' \
-             | LC_ALL=C grep -n -e $'\xe2\x80\x93' -e $'\xe2\x80\x94' || true)"
-    if [ -n "$added" ]; then
-        echo "$added" | head -20
-        die "added lines contain an em or en dash; use a comma, colon or hyphen"
-    fi
-    ok "no dashes added since $BASE"
-else
-    die "base $BASE not found; fetch it (git fetch origin main) or set PRECHECK_BASE"
+step "House style: no em, en, figure or horizontal-bar dashes in tracked files"
+# The tree is clean, so every tracked text file is checked, not only new lines.
+dashes="$(git ls-files -z -- . ':(exclude)Cargo.lock' ':(exclude)agent/Cargo.lock' \
+          | xargs -0 env LC_ALL=C grep -n -I -e $'\xe2\x80\x92' -e $'\xe2\x80\x93' \
+                     -e $'\xe2\x80\x94' -e $'\xe2\x80\x95' -- 2>/dev/null || true)"
+if [ -n "$dashes" ]; then
+    echo "$dashes" | head -20
+    die "tracked files contain a dash character; use a comma, colon or hyphen"
 fi
+ok "no dash characters in tracked files"
 
 step "CHANGELOG has an Unreleased entry for this change"
 if ! git diff --quiet "$BASE" -- . ':(exclude)CHANGELOG.md' ':(exclude)*.md' ':(exclude)docs/**'; then

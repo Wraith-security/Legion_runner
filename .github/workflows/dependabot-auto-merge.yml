@@ -3,7 +3,7 @@ name: Dependabot auto-merge
 # Auto-merge Dependabot patch/minor bumps once all required checks pass; majors
 # are left for human review. `gh pr merge --auto` queues the merge behind the
 # branch's required status checks, so a bump only lands if the whole product
-# still builds and the self-tests (egress + FIM) still pass — that's the
+# still builds and the self-tests (egress + FIM) still pass, that's the
 # compatibility gate.
 #
 # Requires "Allow auto-merge" enabled in repo Settings → General, and branch
@@ -46,7 +46,7 @@ jobs:
         if: steps.meta.outputs.update-type == 'version-update:semver-major'
         run: |
           gh pr comment "$PR_URL" --body \
-            "⚠️ Major version bump (\`${{ steps.meta.outputs.dependency-names }}\`) — \
+            "⚠️ Major version bump (\`${{ steps.meta.outputs.dependency-names }}\`), \
             left for manual review; auto-merge applies to patch/minor only."
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}

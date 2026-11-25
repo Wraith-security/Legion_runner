@@ -1,10 +1,10 @@
-//! Legion link — the "co-pair" with Legion desktop.
+//! Legion link: the "co-pair" with Legion desktop.
 //!
 //! Legion Runner emits a small stream of lifecycle events (provision, job
 //! start, job end, teardown) to the Legion desktop SIEM/SOAR so a fleet of
 //! ephemeral runners shows up alongside host telemetry on one dashboard. The
 //! link is **best-effort**: if Legion isn't listening, events are dropped with
-//! a warning — runner operation never blocks on the monitor.
+//! a warning: runner operation never blocks on the monitor.
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;

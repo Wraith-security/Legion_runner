@@ -2,7 +2,7 @@
   <img src="assets/rust.PNG" alt="Legion Runner" width="420"/>
   <h1>Legion Runner</h1>
   <p><strong>The strongest open defense against CI supply chain attacks.</strong></p>
-  <p><em>Legion watches every outbound connection from a GitHub Actions job, names the process behind it, and blocks anything you have not allowed. Open source. Self contained. Nothing leaves the runner.</em></p>
+  <p><em>Legion watches every outbound connection from a GitHub Actions job, names the process that made it, and blocks what you have not allowed. Open source. Self contained. Nothing leaves the runner.</em></p>
   <p>
     <a href="https://github.com/marketplace/actions/legion-harden-runner"><img src="https://img.shields.io/badge/Marketplace-Legion%20Runner-2ea44f?logo=github" alt="GitHub Marketplace"></a>
     <a href="https://github.com/Wraith-security/legion_runner/releases/latest"><img src="https://img.shields.io/badge/release-latest-22c55e?logo=github" alt="Latest release"></a>
@@ -13,7 +13,7 @@
 **"To our Sponsors"**
 
 > **To Hallud and teamPCP** (and every other crew farming supply-chain footholds):
-> every job lands on a runner that watches every byte out, hashes your tampering,
+> every job lands on a runner that watches every connection out, hashes your tampering,
 > names your processes, and forgets everything the moment it ends. Try and
 > decompile this runner. We dare you.
 
@@ -33,9 +33,11 @@ Add it as the first step of any job, including GitHub-hosted runners:
 - **Records and blocks outbound traffic.** Audit mode logs every egress
   connection. Block mode enforces a default-deny allowlist at the firewall.
   Dynamic allow-by-domain keeps rotating CDN and cloud IPs working.
-- **Names the process behind every connection.** A socket-layer eBPF agent reads
-  connections in the kernel, so custom resolvers and hard-coded IPs cannot slip
-  past it, and it ties each connection to the process that opened it.
+- **Names the process behind every connection.** An eBPF agent traces
+  `connect`, `sendto` and `sendmsg` in the kernel, so a custom resolver or a
+  hard-coded IP shows up with the process that made the call. It does not see
+  io_uring or `sendmmsg`, and the process name is the one a process gives
+  itself; [agent/README.md](agent/README.md) lists the limits.
 - **Catches file tampering.** It fingerprints credential files, config, `.git`
   hooks, and checked-out source at job start, then reports anything changed by
   the time the job ends.
@@ -51,7 +53,7 @@ steps:
 ```
 
 > This repo also ships a companion **ephemeral, single-use self-hosted runner** (a
-> Rust control plane) that authenticates with a **GitHub App** — install once on
+> Rust control plane) that authenticates with a **GitHub App**: install once on
 > your org, no PATs, keyless on the host. To harden GitHub-hosted runners you only
 > need the Action above; the self-hosted platform is documented in
 > [Ephemeral self-hosted runner](#ephemeral-self-hosted-runner).
@@ -72,7 +74,7 @@ keeps everything on the runner and in the open.
   runner control plane called `legionr`. It provisions a runner, serves one job,
   and tears it down. For teams that want to own the whole runner, not just harden
   a hosted one.
-- **Process attribution inline.** Socket-layer capture names the process behind
+- **Process attribution inline.** Syscall-level capture names the process behind
   each connection and prints it in the summary. No dashboard, no external service.
 - **MIT throughout,** including the privileged Rust paths, so you can read and
   audit every line.
@@ -118,8 +120,8 @@ to catch tampering, are written in Rust, and that choice buys real safety:
 
 The action hardens any job, including GitHub-hosted runners. It monitors (and
 optionally blocks) outbound network traffic, then prints every outbound
-connection as a markdown table in the job summary. Features: **socket-layer eBPF
-capture** (process attribution, bypass-proof), **package-repository attribution**
+connection as a markdown table in the job summary. Features: **eBPF capture**
+of `connect`, `sendto` and `sendmsg` (process attribution), **package-repository attribution**
 (names the registries each job reached, such as npm, PyPI, crates.io, apt, and
 Docker), **dynamic allow-by-domain** blocking, **self-contained
 learn-then-enforce** (no external service), and **file-integrity and tamper
@@ -188,7 +190,7 @@ bare IPs is triagable without leaking infrastructure detail.
 | `allowed-presets` | `` | Curated ecosystem allowlists (npm, pip, cargo, apt, docker, and more) to permit in block mode. |
 | `allow-github` | `true` | Always allow GitHub + Actions endpoints. |
 | `dns-capture` | `true` | Route the resolver through a local logger to map connections to the **exact domains** the job resolved (more accurate than reverse DNS). In block mode every non-root DNS query passes it and names off the allowlist are refused. Falls back to reverse DNS if unprivileged. |
-| `ebpf` | `auto` | `auto` uses the Rust/aya eBPF agent for socket-layer capture + process attribution (local binary, else a verified download of the latest release asset); `off` disables it. Falls back to the `/proc` sampler. |
+| `ebpf` | `auto` | `auto` uses the Rust/aya eBPF agent (tracepoints on `connect`, `sendto`, `sendmsg`) for process attribution: a root-owned local binary, else the build pinned by SHA-256 in `action/agents.json`; `off` disables it. Falls back to the `/proc` sampler. |
 | `sample-interval` | `3` | Seconds between egress samples taken by the monitor. |
 | `policy-file` | `.legion/egress-allowed.txt` | Committed allowlist (learn then enforce). |
 | `learn` | `false` | In audit mode, write the observed destinations to `policy-file`. |
@@ -201,7 +203,7 @@ bare IPs is triagable without leaking infrastructure detail.
 | `legion-link` | `` | Stream egress events to a Legion desktop endpoint. |
 
 The action core is pure Node + built-ins (no vendored `node_modules`). Capture
-degrades gracefully: the **eBPF agent** (socket-layer, process attribution) falls
+degrades gracefully: the **eBPF agent** (syscall tracepoints, process attribution) falls
 back to the **`/proc/net` sampler**, so it runs anywhere. The eBPF agent
 ([`agent/`](agent/)) is a separate Rust/aya crate, attached to each release and
 fetched on demand. The action runs only the build whose SHA-256 is committed in
@@ -340,10 +342,10 @@ removes the persistence surface entirely:
   rates it 1.7, OK), kernel sysctl hardening, a default-deny egress allowlist,
   and a separate unprivileged user for every job.
 
-### No PATs — the Legion Runner GitHub App
+### No PATs: the Legion Runner GitHub App
 
 Legion Runner authenticates as a **GitHub App**, not a personal access token.
-Install the App once on your org and every current and future repo is covered —
+Install the App once on your org and every current and future repo is covered:
 "install once, run everywhere." On each job `legionr` signs a short-lived JWT
 with the App key and mints an **installation token** that expires in about an
 hour, so nothing long-lived ever sits on the host or in CI.
@@ -351,7 +353,7 @@ hour, so nothing long-lived ever sits on the host or in CI.
 - **Keyless on the host.** Point `legionr` at the App ID and private key; it
   mints and refreshes its own tokens. No PAT to rotate, no token on disk.
 - **Least privilege.** Only *Administration*, *Actions*, and *Self-hosted
-  runners* — far narrower than a PAT with `repo`/`admin`.
+  runners*, far narrower than a PAT with `repo`/`admin`.
 - **Two-click setup.** A pre-filled creator generates the App with the right
   permissions; see **[docs/github-app.md](docs/github-app.md)**.
 
@@ -453,7 +455,7 @@ Verify the unit's exposure with `systemd-analyze security legionr@default`.
 ### Requirements
 
 - Linux with systemd (and `nftables` for the egress firewall).
-- [Rust](https://rustup.rs) 1.78+ to build `legionr`.
+- [Rust](https://rustup.rs) 1.88+ to build `legionr` (declared as `rust-version`).
 - `curl`, `tar`.
 - A credential that can manage runners on the scope. Recommended: a **Legion
   Runner GitHub App** installed on your org ([docs/github-app.md](docs/github-app.md));

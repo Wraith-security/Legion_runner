@@ -1,5 +1,5 @@
 // Regression tests for the Legion Harden Runner action's pure logic.
-// Run with: node --test action/   (Node's built-in test runner — no deps).
+// Run with: node --test action/   (Node's built-in test runner, no deps).
 
 "use strict";
 
@@ -25,7 +25,7 @@ test("normalizeIp maps IPv4-mapped IPv6 to plain IPv4", () => {
   assert.equal(normalizeIp("140.82.114.21"), "140.82.114.21");
   assert.equal(normalizeIp("2606:50c0::153"), "2606:50c0::153");
   // Expanded IPv4-mapped form (as /proc/net/tcp6 or the eBPF agent can emit it)
-  // must also collapse — this is the "shows as long IPv6" regression.
+  // must also collapse: this is the "shows as long IPv6" regression.
   assert.equal(normalizeIp("0000:0000:0000:0000:0000:ffff:1455:8269"), "20.85.130.105");
   assert.equal(normalizeIp("[0:0:0:0:0:ffff:8c52:7015]"), "140.82.112.21");
   // a genuine IPv6 with an ffff hextet that is NOT v4-mapped stays untouched
