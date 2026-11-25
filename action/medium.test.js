@@ -165,7 +165,7 @@ test("the action allows GitHub's documented runner hosts, never blob storage", (
   ]) {
     assert.ok(GITHUB_EGRESS.includes(h), `missing ${h}`);
   }
-  assert.ok(!GITHUB_EGRESS.some((h) => h.endsWith("blob.core.windows.net")));
+  assert.ok(!GITHUB_EGRESS.some((h) => h === "blob.core.windows.net" || h.endsWith(".blob.core.windows.net")));
   // The suffix entry covers the broker and OIDC token hosts in the forwarder.
   assert.ok(dnscap.domainAllowed("broker.actions.githubusercontent.com", GITHUB_EGRESS));
   assert.ok(dnscap.domainAllowed("token.actions.githubusercontent.com", GITHUB_EGRESS));
