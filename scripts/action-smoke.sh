@@ -64,7 +64,15 @@ import socket, struct
 up = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); up.bind(('127.0.0.2', 53))
 while True:
     m, a = up.recvfrom(512)
-    ans = m[:2] + struct.pack('>HHHHH', 0x8180, 1, 1, 0, 0) + m[12:] + b'\xc0\x0c' + struct.pack('>HHIH', 1, 1, 60, 4) + bytes([192, 0, 2, 10])
+    if b'\x03www\x07example\x03com\x00' in m:
+        # www.example.com is a CNAME to a CDN name outside the allowlist, as
+        # static.rust-lang.org is to fastly.net.
+        tgt = b'\x04edge\x03cdn\x04test\x00'
+        ans = (m[:2] + struct.pack('>HHHHH', 0x8180, 1, 2, 0, 0) + m[12:]
+               + b'\xc0\x0c' + struct.pack('>HHIH', 5, 1, 60, len(tgt)) + tgt
+               + struct.pack('>H', 0xc000 | (len(m) + 12)) + struct.pack('>HHIH', 1, 1, 60, 4) + bytes([192, 0, 2, 11]))
+    else:
+        ans = m[:2] + struct.pack('>HHHHH', 0x8180, 1, 1, 0, 0) + m[12:] + b'\xc0\x0c' + struct.pack('>HHIH', 1, 1, 60, 4) + bytes([192, 0, 2, 10])
     up.sendto(ans, a)
 PY
 UPSTREAM=$!
@@ -130,6 +138,8 @@ def q(server, name):
 print('EVIL_VIA_1111=%s' % q('1.1.1.1', 'exfil.evil.test'))
 print('EVIL_VIA_STUB=%s' % q('127.0.0.1', 'exfil2.evil.test'))
 print('ALLOWED_VIA_1111=%s' % q('1.1.1.1', 'www.example.com'))
+print('CNAME_TARGET=%s' % q('1.1.1.1', 'edge.cdn.test'))
+print('CNAME_SIBLING=%s' % q('1.1.1.1', 'other.cdn.test'))
 PY
 } > "$W/steps.log" 2>&1
 STATE_sudo="\$(sed -n 's/^sudo=//p' "\$GITHUB_STATE")" STATE_isPost=true node action/index.js > "$W/post.log" 2>&1
@@ -149,6 +159,8 @@ grep -q 'EVIDENCE=hidden' "$W/steps.log" && pass "evidence unreadable to the job
 grep -q 'EVIL_VIA_1111=5' "$W/steps.log" && pass "unlisted name REFUSED via 1.1.1.1 (redirected)" || fail "unlisted name not refused via 1.1.1.1"
 grep -q 'EVIL_VIA_STUB=5' "$W/steps.log" && pass "unlisted name REFUSED via the forwarder" || fail "unlisted name not refused locally"
 grep -q 'ALLOWED_VIA_1111=0' "$W/steps.log" && pass "allowlisted name answered" || fail "allowlisted name not answered"
+grep -q 'CNAME_TARGET=0' "$W/steps.log" && pass "CNAME target of an allowed name answered" || fail "CNAME target of an allowed name refused"
+grep -q 'CNAME_SIBLING=5' "$W/steps.log" && pass "a sibling of that target still REFUSED" || fail "a sibling of the CNAME target was not refused"
 grep -q 'revoked for job steps' "$W/summary.md" && pass "summary says sudo was revoked" || fail "summary missing the sudo line"
 grep -q 'exfil.evil.test' "$W/summary.md" && pass "summary lists the refused lookup" || fail "summary missing refused lookups"
 if iptables-save | grep -q LEGION || ip6tables-save | grep -q LEGION; then fail "rules left after Runner.Worker exited"; else pass "warden removed every rule"; fi

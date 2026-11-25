@@ -53,7 +53,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
       - name: Harden runner (Legion, BLOCK)
-        uses: Wraith-security/legion_runner@v1.2.0   # dogfood our own action
+        uses: ./   # this commit's action, which CI has just passed
         with:
           # Version compute + gh release create + git tag push. GitHub is covered
           # by allow-github; uploads.github.com (asset upload) is in the allowlist.
@@ -160,7 +160,7 @@ jobs:
           ref: ${{ needs.release.outputs.sha }}
           persist-credentials: false
       - name: Harden runner (Legion, BLOCK)
-        uses: Wraith-security/legion_runner@v1.2.0   # dogfood our own action
+        uses: ./   # this commit's action, which CI has just passed
         with:
           # nightly toolchain + cargo-binstall (bpf-linker prebuilt) + cargo build.
           # uploads.github.com (gh release upload) is in the allowlist.
@@ -175,7 +175,7 @@ jobs:
           toolchain: nightly
           components: rust-src
       - name: Install cargo-binstall
-        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with:
           tool: cargo-binstall
       - name: Install bpf-linker (prebuilt)
@@ -212,7 +212,7 @@ jobs:
           ref: ${{ needs.release.outputs.sha }}
           persist-credentials: false
       - name: Harden runner (Legion, BLOCK)
-        uses: Wraith-security/legion_runner@v1.2.0   # dogfood our own action
+        uses: ./   # this commit's action, which CI has just passed
         with:
           # stable toolchain + cargo build. uploads.github.com (gh release upload)
           # is in the allowlist.
