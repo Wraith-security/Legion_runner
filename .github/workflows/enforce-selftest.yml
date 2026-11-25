@@ -124,6 +124,20 @@ jobs:
           job-summary: 'false'
           ebpf: 'off'
           learned-baseline: 'false'
+      # Diagnostics for the redirect path (kept: when a DNS check fails here,
+      # this is the first thing anyone needs to see). sudo is still available.
+      - name: Show the DNS redirect state
+        if: always()
+        run: |
+          set +e
+          echo "== nat OUTPUT / LEGION_DNS"; sudo iptables -t nat -S OUTPUT; sudo iptables -t nat -S LEGION_DNS
+          echo "== filter OUTPUT / LEGION_EGRESS (head)"; sudo iptables -S OUTPUT; sudo iptables -S LEGION_EGRESS | head -12
+          echo "== listeners on :53"; sudo ss -lunp | grep ':53 '
+          echo "== iptables backend"; iptables --version
+          echo "== one query to 1.1.1.1"; dig +time=3 +tries=1 @1.1.1.1 example.com A | grep -E 'status|timed out|SERVER'
+          echo "== conntrack for 1.1.1.1"; sudo conntrack -L -d 1.1.1.1 2>&1 | head -5
+          echo "== denies"; sudo dmesg | grep LEGION-DENY | tail -5
+          echo "== route to 1.1.1.1"; ip route get 1.1.1.1
       - name: Unlisted names are refused, even asked of an outside resolver
         run: |
           set -u
