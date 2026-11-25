@@ -7,6 +7,8 @@
 //!   pair [--link URL]   Test/point the Legion desktop link.
 //!   status              Show config + GitHub/Legion connectivity.
 //!   doctor              Preflight checks before going live.
+//!   check-isolation     Prove a job cannot reach the control plane's secrets.
+//!   selftest-job        Run a local command as an isolated job (no GitHub).
 
 use std::path::PathBuf;
 
@@ -18,8 +20,9 @@ use legionr_core::config::Scope;
 use legionr_core::container::ContainerBackend;
 use legionr_core::github::{token_from_env, GitHubClient};
 use legionr_core::harden::HardeningProfile;
+use legionr_core::jobuser::IsolationProbe;
 use legionr_core::link::LegionLink;
-use legionr_core::runner::Runner;
+use legionr_core::runner::{helper_main, Runner};
 use legionr_core::{data_dir, RunnerConfig, VERSION};
 
 // ─────────────────────────────── CLI definition ─────────────────────────────
@@ -65,6 +68,9 @@ enum Commands {
         /// Skip the live GitHub connectivity probe.
         #[arg(long)]
         no_probe: bool,
+        /// User every job runs as (must differ from the control-plane user).
+        #[arg(long, default_value = "legionr-job")]
+        job_user: String,
     },
 
     /// Provision → run one job → teardown. Loops forever unless `--once`.
@@ -101,6 +107,47 @@ enum Commands {
 
     /// Run preflight checks before serving jobs.
     Doctor,
+
+    /// Prove, from a process running as the job user, that a job cannot read
+    /// the credential or config, cannot write the runner template, and holds no
+    /// privilege. `legionr run` performs the same check before every job.
+    CheckIsolation,
+
+    /// Prepare an isolated job, run COMMAND in it as the job user, then wipe.
+    /// Exercises the single-use lifecycle without GitHub.
+    SelftestJob {
+        /// Shell command to run as the job (via /bin/sh -c).
+        #[arg(long)]
+        cmd: String,
+    },
+
+    #[command(name = "__job-prepare", hide = true)]
+    JobPrepare {
+        #[arg(long)]
+        uid: u32,
+        #[arg(long)]
+        work: PathBuf,
+        #[arg(long)]
+        template: PathBuf,
+    },
+
+    #[command(name = "__job-wipe", hide = true)]
+    JobWipe {
+        #[arg(long)]
+        uid: u32,
+        #[arg(long)]
+        work: PathBuf,
+    },
+
+    #[command(name = "__job-probe", hide = true)]
+    JobProbe {
+        #[arg(long)]
+        uid: u32,
+        #[arg(long = "deny-read")]
+        deny_read: Vec<PathBuf>,
+        #[arg(long = "deny-write")]
+        deny_write: Vec<PathBuf>,
+    },
 }
 
 // ─────────────────────────────────── main ───────────────────────────────────
@@ -118,9 +165,10 @@ async fn main() -> Result<()> {
             link,
             allow,
             no_probe,
+            job_user,
         } => {
             provision(
-                cli.config, &scope, labels, &container, link, allow, no_probe,
+                cli.config, &scope, labels, &container, link, allow, no_probe, &job_user,
             )
             .await
         }
@@ -133,6 +181,30 @@ async fn main() -> Result<()> {
         Commands::Pair { link } => pair(cli.config, link).await,
         Commands::Status => status(cli.config).await,
         Commands::Doctor => doctor(cli.config).await,
+        Commands::CheckIsolation => check_isolation(cli.config).await,
+        Commands::SelftestJob { cmd } => selftest_job(cli.config, &cmd).await,
+        Commands::JobPrepare {
+            uid,
+            work,
+            template,
+        } => helper_main::prepare(uid, &work, &template),
+        Commands::JobWipe { uid, work } => helper_main::wipe(uid, &work),
+        Commands::JobProbe {
+            uid,
+            deny_read,
+            deny_write,
+        } => {
+            let probe = IsolationProbe {
+                expect_uid: uid,
+                deny_read,
+                deny_write,
+            };
+            if helper_main::probe(&probe) {
+                Ok(())
+            } else {
+                std::process::exit(1)
+            }
+        }
     }
 }
 
@@ -168,9 +240,11 @@ async fn provision(
     link: Option<String>,
     allow: Vec<String>,
     no_probe: bool,
+    job_user: &str,
 ) -> Result<()> {
     let scope = Scope::parse(scope)?;
     let mut cfg = RunnerConfig::new(scope.clone());
+    cfg.job_user = job_user.to_string();
 
     if let Some(labels) = labels {
         cfg.labels = labels
@@ -203,16 +277,42 @@ async fn provision(
     println!("  scope:     {}", cfg.scope.registration_url());
     println!("  labels:    {}", cfg.labels.join(", "));
     println!("  container: {:?}", cfg.container);
+    println!(
+        "  job user:  {} (control plane: {})",
+        cfg.job_user, cfg.run_as
+    );
     println!("  link:      {}", display_link(&cfg.legion_link));
     println!("\nNext: `legionr harden --install` (as root), then `legionr run`.");
     Ok(())
 }
 
+/// Files a job must never be able to read: the config, the systemd env file
+/// beside it (it holds the credential), and the App key file if one is set.
+fn sensitive_paths(config: &std::path::Path) -> Vec<PathBuf> {
+    let mut paths = vec![config.to_path_buf(), config.with_extension("env")];
+    if let Some(key) = std::env::var_os("LEGIONR_APP_PRIVATE_KEY_FILE") {
+        paths.push(PathBuf::from(key));
+    }
+    paths.retain(|p| p.exists());
+    paths
+}
+
+/// Build a runner whose isolation check covers this config's secrets.
+fn isolated_runner(config: Option<PathBuf>) -> Result<Runner> {
+    let path = config_path(config);
+    let cfg = RunnerConfig::load(&path).with_context(|| {
+        format!(
+            "no usable config at {}; run `legionr provision <owner/repo>` first",
+            path.display()
+        )
+    })?;
+    Ok(Runner::new(cfg).with_sensitive_paths(sensitive_paths(&path)))
+}
+
 async fn run(config: Option<PathBuf>, once: bool) -> Result<()> {
-    let cfg = load_config(config)?;
-    let scope = cfg.scope.clone();
-    let link = LegionLink::new(cfg.legion_link.clone());
-    let runner = Runner::new(cfg);
+    let runner = isolated_runner(config)?;
+    let scope = runner.config().scope.clone();
+    let link = LegionLink::new(runner.config().legion_link.clone());
 
     loop {
         // Resolve the credential per iteration: with GitHub App auth the
@@ -311,7 +411,11 @@ fn harden(config: Option<PathBuf>, install: bool, instance: &str, refresh: bool)
     println!("  sysctl: sysctl --system");
     println!(
         "  creds:  put the GitHub App config (LEGIONR_APP_ID + LEGIONR_APP_PRIVATE_KEY_FILE)\n\
-        \x20         or LEGIONR_TOKEN in /etc/legion-runner/{instance}.env  (root-owned, 0600) — see docs/github-app.md"
+        \x20         or LEGIONR_TOKEN in /etc/legion-runner/{instance}.env (root:root 0600);\n\
+        \x20         key file root:{user} 0640, never readable by {job}. See docs/github-app.md\n\
+        \x20 check:  legionr --config <config> check-isolation",
+        user = cfg.run_as,
+        job = cfg.job_user
     );
     Ok(())
 }
@@ -397,6 +501,7 @@ async fn status(config: Option<PathBuf>) -> Result<()> {
 }
 
 async fn doctor(config: Option<PathBuf>) -> Result<()> {
+    let cfg_path = config_path(config.clone());
     let cfg = load_config(config)?;
     let mut ok = true;
 
@@ -428,6 +533,9 @@ async fn doctor(config: Option<PathBuf>) -> Result<()> {
         "set run_as to a dedicated unprivileged user",
         &mut ok,
     );
+    for (label, pass, hint) in isolation_layout_checks(&cfg, &cfg_path) {
+        check(&label, pass, &hint, &mut ok);
+    }
     let run_sh = cfg.runner_dir.join("run.sh");
     check(
         &format!("official runner present ({})", run_sh.display()),
@@ -494,6 +602,49 @@ async fn doctor(config: Option<PathBuf>) -> Result<()> {
     }
 }
 
+async fn check_isolation(config: Option<PathBuf>) -> Result<()> {
+    let runner = isolated_runner(config)?;
+    let cfg = runner.config();
+    println!(
+        "control plane: uid {}  job user: {}",
+        legionr_core::jobuser::current_uid(),
+        cfg.job_user
+    );
+    let id = runner.job_identity()?;
+    runner.prepare(id).await?;
+    let fails = runner.verify_isolation(id).await?;
+    runner.wipe(id).await?;
+    if fails.is_empty() {
+        println!(
+            "✔ job runs as uid {} with no capabilities and a clean environment",
+            id.uid
+        );
+        println!("✔ job cannot read the config, env file or App key, or write the runner template");
+        Ok(())
+    } else {
+        for f in &fails {
+            println!("✗ {f}");
+        }
+        println!("\nIsolation check failed: jobs would not be separated from the control plane.");
+        std::process::exit(1);
+    }
+}
+
+async fn selftest_job(config: Option<PathBuf>, cmd: &str) -> Result<()> {
+    let runner = isolated_runner(config)?;
+    let id = runner.prepare_isolated().await?;
+    let code = runner
+        .run_local(id, "/bin/sh", &["-c".to_string(), cmd.to_string()])
+        .await;
+    runner.wipe(id).await?;
+    let code = code?;
+    println!("job exited {code}; work directory wiped");
+    if code != 0 {
+        std::process::exit(code);
+    }
+    Ok(())
+}
+
 // ──────────────────────────────── helpers ───────────────────────────────────
 
 fn display_link(link: &str) -> String {
@@ -514,6 +665,113 @@ fn write_root(path: &str, contents: &str) -> Result<()> {
     std::fs::write(&p, contents).with_context(|| format!("writing {path} (are you root?)"))?;
     println!("  wrote {path}");
     Ok(())
+}
+
+/// Static checks of the on-disk layout that keeps jobs away from the control
+/// plane: (label, passed, hint). `check-isolation` proves the same at runtime.
+fn isolation_layout_checks(
+    cfg: &RunnerConfig,
+    config: &std::path::Path,
+) -> Vec<(String, bool, String)> {
+    use std::os::unix::fs::MetadataExt;
+    let mut out = Vec::new();
+    let job = match legionr_core::jobuser::JobIdentity::lookup(&cfg.job_user) {
+        Ok(id) => id,
+        Err(e) => {
+            out.push((
+                format!("job user '{}' exists", cfg.job_user),
+                false,
+                e.to_string(),
+            ));
+            return out;
+        }
+    };
+    let control = legionr_core::jobuser::JobIdentity::lookup(&cfg.run_as).ok();
+    out.push((
+        format!(
+            "job user '{}' is separate from '{}'",
+            cfg.job_user, cfg.run_as
+        ),
+        job.uid != 0
+            && control
+                .map(|c| c.uid != job.uid && c.gid != job.gid)
+                .unwrap_or(true),
+        "give jobs their own user and group (scripts/install.sh creates legionr-job)".into(),
+    ));
+
+    // The job user may only write work_dir: the runner must be a template it
+    // cannot change, at every level.
+    let writable_by_job = |m: &std::fs::Metadata| {
+        let mode = m.mode();
+        (m.uid() == job.uid && mode & 0o200 != 0)
+            || (m.gid() == job.gid && mode & 0o020 != 0)
+            || mode & 0o002 != 0
+    };
+    let template_ok = std::fs::metadata(&cfg.runner_dir)
+        .map(|m| !writable_by_job(&m))
+        .unwrap_or(false)
+        && std::fs::metadata(cfg.runner_dir.join("run.sh"))
+            .map(|m| !writable_by_job(&m))
+            .unwrap_or(true);
+    out.push((
+        format!(
+            "runner template {} is read-only to jobs",
+            cfg.runner_dir.display()
+        ),
+        template_ok,
+        format!(
+            "chown -R root:root {0} && chmod -R go-w {0}",
+            cfg.runner_dir.display()
+        ),
+    ));
+
+    let work_ok = std::fs::metadata(&cfg.work_dir)
+        .map(|m| m.uid() == job.uid && m.mode() & 0o077 == 0)
+        .unwrap_or(false);
+    out.push((
+        format!(
+            "work dir {} belongs to the job user only",
+            cfg.work_dir.display()
+        ),
+        work_ok,
+        format!(
+            "chown {1}:{1} {0} && chmod 0700 {0}",
+            cfg.work_dir.display(),
+            cfg.job_user
+        ),
+    ));
+
+    // Config, env file and key: no read path for the job user.
+    let readable_by_job = |m: &std::fs::Metadata| {
+        let mode = m.mode();
+        (m.uid() == job.uid && mode & 0o400 != 0)
+            || (m.gid() == job.gid && mode & 0o040 != 0)
+            || mode & 0o004 != 0
+    };
+    let mut secrets = vec![config.to_path_buf(), config.with_extension("env")];
+    if let Some(dir) = config.parent() {
+        secrets.push(dir.to_path_buf());
+    }
+    if let Some(key) = std::env::var_os("LEGIONR_APP_PRIVATE_KEY_FILE") {
+        secrets.push(PathBuf::from(key));
+    }
+    let exposed: Vec<String> = secrets
+        .iter()
+        .filter_map(|p| std::fs::metadata(p).ok().map(|m| (p, m)))
+        .filter(|(_, m)| readable_by_job(m))
+        .map(|(p, _)| p.display().to_string())
+        .collect();
+    out.push((
+        "config and credentials are unreadable to jobs".into(),
+        exposed.is_empty(),
+        format!(
+            "readable by {}: {}; use root:{} 0750 for the directory, 0640 or 0600 for files",
+            cfg.job_user,
+            exposed.join(", "),
+            cfg.run_as
+        ),
+    ));
+    out
 }
 
 /// Tiny `which`: scan `$PATH` for an executable name.

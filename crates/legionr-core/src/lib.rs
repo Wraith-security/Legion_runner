@@ -9,13 +9,14 @@
 //! practical defense against poisoned-pipeline persistence.
 //!
 //! Modules:
-//! - [`config`]  — runner configuration (scope, labels, sandbox, Legion link).
-//! - [`github`]  — GitHub REST client: JIT config + registration/remove tokens.
-//! - [`runner`]  — the ephemeral lifecycle: provision → run one job → teardown.
-//! - [`harden`]  — generators for the hardened systemd unit, sysctl, nftables.
-//! - [`container`] — rootless container sandbox backend (Podman/Docker).
-//! - [`link`]    — heartbeats lifecycle events to the Legion desktop monitor.
-//! - [`fim`]     — file-integrity monitoring: snapshot + diff of tamper targets.
+//! - [`config`]: runner configuration (scope, labels, sandbox, Legion link).
+//! - [`github`]: GitHub REST client: JIT config + registration/remove tokens.
+//! - [`runner`]: the ephemeral lifecycle: prepare, run one job, wipe.
+//! - [`jobuser`]: job isolation: a separate job user, fresh runner copy, wipe.
+//! - [`harden`]: generators for the hardened systemd unit, sysctl, nftables.
+//! - [`container`]: rootless container sandbox backend (Podman/Docker).
+//! - [`link`]: heartbeats lifecycle events to the Legion desktop monitor.
+//! - [`fim`]: file-integrity monitoring: snapshot + diff of tamper targets.
 
 pub mod app_auth;
 pub mod config;
@@ -23,6 +24,7 @@ pub mod container;
 pub mod fim;
 pub mod github;
 pub mod harden;
+pub mod jobuser;
 pub mod link;
 pub mod runner;
 pub mod tailscale;
