@@ -10,3 +10,5 @@ _work/
 .DS_Store
 # The pinned agent hashes are source, not build output.
 !action/agents.json
+# The eBPF agent workspace builds here (it is not under the root /target).
+/agent/target

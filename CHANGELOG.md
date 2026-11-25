@@ -44,7 +44,11 @@ Unreleased section.
   `actions.githubusercontent.com` suffix). `*.blob.core.windows.net` stays
   opt-in because it covers every Azure Storage account. New `docs/egress.md`
   explains what each layer allows.
+- `scripts/precheck.sh` fails when build output (a `target/` directory) is
+  tracked, and `/agent/target` is ignored. The eBPF workspace builds outside
+  the root `/target`, so its output was not covered.
 
+## [1.2.0] - 2026-11-25
 
 ### Security
 - **Block mode no longer leaves DNS open.** Port 53 was allowed to every
