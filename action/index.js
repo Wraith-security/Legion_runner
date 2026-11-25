@@ -471,8 +471,7 @@ async function startEbpf(connectLog, bin) {
     if (!alive) {
       const reason =
         (readEvidence(errLog).trim().split("\n").pop() || "agent exited on startup").slice(0, 300);
-      const btf = ebpf.hasBtf() ? "" : "; this kernel has no BTF (/sys/kernel/btf/vmlinux)";
-      warn(`eBPF agent failed to start (${reason}${btf}); using the /proc sampler`);
+      warn(`eBPF agent failed to start (${reason}); using the /proc sampler`);
       return out; // active stays false — the sampler covers capture
     }
     out.active = true;
@@ -548,6 +547,27 @@ function defaultIface() {
   } catch {
     return "";
   }
+}
+
+/// The IPv4 address of the Docker bridge ("" when there is no docker0).
+/// os.networkInterfaces() (libuv) lists only interfaces that are up AND
+/// running, and docker0 has no carrier until a container starts, so it is
+/// usually missing there; `ip` reports the address whatever the link state.
+function dockerBridgeIp(ifaces = os.networkInterfaces(), ipAddrText = null) {
+  const a = (ifaces.docker0 || []).find((x) => (x.family === "IPv4" || x.family === 4) && !x.internal);
+  if (a) return a.address;
+  let text = ipAddrText;
+  if (text === null) {
+    try {
+      text = execFileSync("ip", ["-4", "-o", "addr", "show", "dev", "docker0"], {
+        stdio: ["ignore", "pipe", "ignore"],
+      }).toString();
+    } catch {
+      text = "";
+    }
+  }
+  const m = (text || "").match(/\binet (\d+\.\d+\.\d+\.\d+)\//);
+  return m ? m[1] : "";
 }
 
 /// uid of a system user, or null.
@@ -898,6 +918,9 @@ async function startDnsCapture(opts = {}) {
       opts.enforce ? "1" : "0",
       (opts.domains || []).join(","),
       out.refusedLog,
+      // Also listen on the Docker bridge so container DNS can go through the
+      // forwarder (allowlist and dynamic allows), not straight upstream.
+      opts.enforce ? dockerBridgeIp() : "",
       runTag(),
     ];
     // Bind :53 requires privilege → root directly, else sudo. Detached.
@@ -931,6 +954,16 @@ async function startDnsCapture(opts = {}) {
         firewall.applyDnsRedirect(privExec);
         out.redirect = true;
         info("   all non-root DNS on the host now passes the forwarder (names off the allowlist are refused)");
+        const bridge = dockerBridgeIp();
+        if (bridge) {
+          // Containers too: their DNS is sent to the forwarder on the bridge,
+          // so a rotating allowlisted host (github.com) works in a container.
+          firewall.setContainerDns(privExec, bridge);
+          out.containerDns = bridge;
+          info(`   container DNS goes through the forwarder too (${bridge})`);
+        } else {
+          info("   no Docker bridge found: container DNS goes to the upstream resolver (names not filtered)");
+        }
       } catch (e) {
         warn(`could not redirect DNS to the forwarder (${e.message}); DNS names are not filtered`);
       }
@@ -1126,7 +1159,7 @@ async function main() {
   writeEvidence(logFile, "");
   const pid = startMonitor(logFile, interval);
 
-  // Preferred capture: eBPF tracepoints on connect/sendto/sendmsg, with process names.
+  // Preferred capture: eBPF (socket-layer, bypass-proof, with process names).
   // The /proc sampler above stays as a fallback when eBPF is unavailable.
   let ebpfCap = { active: false, log: "" };
   if (input("ebpf", "auto").toLowerCase() !== "off") {
@@ -1134,7 +1167,9 @@ async function main() {
     if (!bin) {
       // Say WHY the agent isn't available, so a silent sampler fallback is
       // diagnosable instead of looking like "eBPF just doesn't work".
-      if (process.platform !== "linux" || process.arch !== "x64")
+      if (!ebpf.hasBtf())
+        warn("eBPF unavailable: no kernel BTF (/sys/kernel/btf/vmlinux) on this runner; using the /proc sampler");
+      else if (process.platform !== "linux" || process.arch !== "x64")
         warn(
           `eBPF unavailable: no agent build for ${process.platform}/${process.arch} (the published legionr-bpf is x86_64 Linux); using the /proc sampler`,
         );
@@ -1797,4 +1832,5 @@ module.exports = {
   GITHUB_EGRESS,
   defaultIfaceFromRoute,
   readPolicyEntries,
+  dockerBridgeIp,
 };

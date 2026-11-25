@@ -194,7 +194,16 @@ jobs:
           if docker run --rm alpine:3.20 wget -q -T 15 -O /dev/null https://www.wikipedia.org; then
             echo "FAIL: container reached an unlisted host (block mode bypassed)"; exit 1
           fi
-          echo "PASS: container egress is filtered like the host's"
+          # github.com rotates between addresses; a container must get the same
+          # allow-by-domain as the host (its DNS goes through the forwarder).
+          for i in 1 2 3 4 5; do
+            docker run --rm alpine:3.20 wget -q -T 20 -O /dev/null https://github.com \
+              || { echo "FAIL: container could not reach github.com (attempt $i)"; exit 1; }
+          done
+          out="$(docker run --rm alpine:3.20 nslookup "exfil-${RANDOM}.example.net" 2>&1 || true)"
+          echo "$out" | grep -qiE 'REFUSED|server can.t find' \
+            || { echo "FAIL: an unlisted lookup from a container was not refused"; echo "$out"; exit 1; }
+          echo "PASS: container egress and DNS are filtered like the host's"
 
   # H2 and H4: with disable-sudo the job really loses sudo, cannot read or edit
   # Legion's evidence, block mode stays up, and the job still finalizes (the

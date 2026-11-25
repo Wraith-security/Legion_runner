@@ -126,6 +126,23 @@ function containerDnsRules(resolver) {
   return out;
 }
 
+/// Point container DNS at `target` (the forwarder on the Docker bridge once DNS
+/// capture is up, so containers get the same allowlist and dynamic allows as
+/// the host; the upstream resolver otherwise). Replaces any earlier target.
+function setContainerDns(exec, target) {
+  try {
+    exec(["iptables", "-t", "nat", "-N", CDNS_CHAIN]);
+  } catch {
+    exec(["iptables", "-t", "nat", "-F", CDNS_CHAIN]);
+  }
+  for (const rule of containerDnsRules(target)) exec(["iptables", ...rule]);
+  try {
+    exec(["iptables", "-t", "nat", "-C", "PREROUTING", "-j", CDNS_CHAIN]);
+  } catch {
+    exec(["iptables", "-t", "nat", "-I", "PREROUTING", "1", "-j", CDNS_CHAIN]);
+  }
+}
+
 /// Pure: the full teardown, every jump removed BEFORE its chain is flushed
 /// (removing the OUTPUT jump is what restores the runner's egress).
 function unblockCommands() {
@@ -221,17 +238,7 @@ function applyAll(exec, plan) {
     }
   }
   if (plan.extIface && (plan.resolvers4 || []).length) {
-    try {
-      exec(["iptables", "-t", "nat", "-N", CDNS_CHAIN]);
-    } catch {
-      exec(["iptables", "-t", "nat", "-F", CDNS_CHAIN]);
-    }
-    for (const rule of containerDnsRules(plan.resolvers4[0])) exec(["iptables", ...rule]);
-    try {
-      exec(["iptables", "-t", "nat", "-C", "PREROUTING", "-j", CDNS_CHAIN]);
-    } catch {
-      exec(["iptables", "-t", "nat", "-I", "PREROUTING", "1", "-j", CDNS_CHAIN]);
-    }
+    setContainerDns(exec, plan.resolvers4[0]);
   }
 }
 
@@ -308,6 +315,7 @@ module.exports = {
   DNS_CHAIN,
   CDNS_CHAIN,
   containerDnsRules,
+  setContainerDns,
   egressBlockRules,
   forwardBlockRules,
   ipAcceptRules,
