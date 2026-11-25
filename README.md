@@ -300,10 +300,20 @@ removes the persistence surface entirely:
 - **One job, then gone.** The runner exits after a single job; systemd restarts
   it, which provisions a brand-new runner. A single unit becomes a continuous,
   self-renewing pool.
-- **Workspace wiped.** `_work` is cleared on teardown, every time.
-- **Defense in depth.** A `systemd-analyze security`-grade unit, kernel sysctl
-  hardening, a default-deny egress allowlist, and an optional rootless container
-  sandbox per job.
+- **Jobs never run as the control plane.** `legionr` holds the GitHub
+  credential and runs as `legionr`. Every job runs as a separate `legionr-job`
+  user with no capabilities, no supplementary groups, `no_new_privs`, and an
+  environment rebuilt from a short allowlist, so it cannot read the App key,
+  the env file or the control plane's environment.
+- **Nothing carries over.** The installed runner is a read-only template. Each
+  job runs from a fresh copy with its own HOME and TMP. Afterwards every process
+  left running as `legionr-job` is killed and the whole job directory is wiped.
+- **Checked before every job.** Before minting a credential, `legionr` proves
+  from inside a job-user process that the job is isolated, and refuses to run
+  the job if it is not. `legionr check-isolation` runs the same check on demand.
+- **Defense in depth.** A hardened systemd unit (`systemd-analyze security`
+  rates it 1.7, OK), kernel sysctl hardening, a default-deny egress allowlist,
+  and an optional rootless container sandbox per job.
 
 ### No PATs — the Legion Runner GitHub App
 
@@ -345,25 +355,29 @@ hour, so nothing long-lived ever sits on the host or in CI.
 ### Quick start
 
 ```bash
-# 1. Install (creates the legionr user, fetches the official runner, builds legionr)
+# 1. Install: creates the legionr and legionr-job users, fetches the official
+#    runner as a read-only template, builds legionr. Needs Rust for the build.
 sudo ./scripts/install.sh
 
-# 2. Point a runner at a repo or org (credential never touches disk)
-#    Recommended: the Legion Runner GitHub App (keyless, no PAT). Install it on
-#    your org, then point legionr at the App ID + private key — see docs/github-app.md.
-export LEGIONR_APP_ID=<your App ID>
-export LEGIONR_APP_PRIVATE_KEY_FILE=/etc/legion-runner/legion-app.pem
-#    …or use a classic token instead:
-# export LEGIONR_TOKEN=<PAT with manage-runners>
-sudo -u legionr -E legionr provision Wraith-security/legion_runner \
-     --config /etc/legion-runner/default.json \
-     --container podman \
-     --link http://127.0.0.1:3000
+# 2. Write the config (no secrets in it).
+sudo LEGIONR_DATA_DIR=/opt/legion-runner legionr provision your-org/your-repo \
+     --config /etc/legion-runner/default.json
 
-# 3. Harden the host (systemd unit + sysctl + default-deny egress firewall)
+# 3. Give the control plane its credential. Recommended: the Legion Runner
+#    GitHub App (no PAT), see docs/github-app.md. The key is readable by the
+#    legionr user only, never by legionr-job.
+sudo install -o root -g legionr -m 0640 legion-app.pem /etc/legion-runner/app.pem
+printf 'LEGIONR_APP_ID=%s\nLEGIONR_APP_PRIVATE_KEY_FILE=%s\n' \
+     YOUR_APP_ID /etc/legion-runner/app.pem \
+  | sudo install -o root -g root -m 0600 /dev/stdin /etc/legion-runner/default.env
+#    (or put LEGIONR_TOKEN=<PAT with manage-runners> in that file instead)
+
+# 4. Prove a job cannot reach the credential, then harden the host
+#    (systemd unit + sysctl + default-deny egress firewall).
+sudo legionr --config /etc/legion-runner/default.json check-isolation
 sudo ./scripts/harden.sh
 
-# 4. Light it up. A self-renewing pool of single-use runners.
+# 5. Light it up. A self-renewing pool of single-use runners.
 sudo systemctl enable --now legionr@default
 journalctl -u legionr@default -f
 ```
@@ -385,11 +399,15 @@ jobs:
 | `legionr harden [--install]` | Emit (or install) the systemd unit, sysctl drop-in, and nftables ruleset. |
 | `legionr pair [--link URL]` | Test or repoint the Legion desktop link. |
 | `legionr status` | Show config + GitHub/Legion connectivity. |
-| `legionr doctor` | Preflight checks before going live. |
+| `legionr doctor` | Preflight checks before going live, including the isolation layout. |
+| `legionr check-isolation` | Prove, as the job user, that a job cannot read the credential or write the runner. |
+| `legionr selftest-job --cmd CMD` | Run CMD as an isolated job (prepare, run, wipe) without GitHub. |
 
 ### Hardening at a glance
 
-- **Identity:** dedicated non-root `legionr` user; `root` is refused outright.
+- **Identity:** the control plane runs as `legionr` with only `CAP_SETUID`
+  and `CAP_SETGID`; jobs run as `legionr-job` with no capabilities. `root` is
+  refused for both, and so is using one user for both.
 - **systemd sandbox:** `NoNewPrivileges`, empty `CapabilityBoundingSet`,
   `ProtectSystem=strict`, `ProtectKernel*`, `SystemCallFilter=@system-service`
   minus `@privileged @resources @obsolete`, `RestrictAddressFamilies`,

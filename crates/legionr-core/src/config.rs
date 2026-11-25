@@ -77,17 +77,25 @@ pub struct RunnerConfig {
     #[serde(default = "default_group")]
     pub runner_group_id: u64,
 
-    /// Directory holding the unpacked official runner release.
+    /// The unpacked official runner release. A read-only template: each job
+    /// runs from its own copy under `work_dir`, so a job can never modify it.
     #[serde(default = "default_runner_dir")]
     pub runner_dir: PathBuf,
 
-    /// Per-job work directory (`_work`). Wiped on teardown.
+    /// Per-job scratch root, owned by `job_user` (mode 0700). Holds the job's
+    /// runner copy, workspace, HOME and TMP. Emptied before and after each job.
     #[serde(default = "default_work_dir")]
     pub work_dir: PathBuf,
 
-    /// Unprivileged service user the runner executes as.
+    /// Unprivileged service user the control plane runs as. It holds the GitHub
+    /// credential, so jobs never run as this user.
     #[serde(default = "default_user")]
     pub run_as: String,
+
+    /// Unprivileged user every job runs as. Must differ from `run_as` and must
+    /// not be root. Give each runner instance on a host its own job user.
+    #[serde(default = "default_job_user")]
+    pub job_user: String,
 
     /// Enforce single-use semantics (`--ephemeral` / JIT). Always recommended.
     #[serde(default = "default_true")]
@@ -130,6 +138,7 @@ impl RunnerConfig {
             runner_dir: default_runner_dir(),
             work_dir: default_work_dir(),
             run_as: default_user(),
+            job_user: default_job_user(),
             ephemeral: default_true(),
             container: ContainerBackend::default(),
             container_image: default_image(),
@@ -174,6 +183,19 @@ impl RunnerConfig {
         if self.run_as == "root" {
             anyhow::bail!("run_as=root is refused; use a dedicated unprivileged user");
         }
+        if !valid_user_name(&self.job_user) {
+            anyhow::bail!("job_user '{}' is not a valid user name", self.job_user);
+        }
+        if self.job_user == "root" {
+            anyhow::bail!("job_user=root is refused; jobs must run unprivileged");
+        }
+        if self.job_user == self.run_as {
+            anyhow::bail!(
+                "job_user must differ from run_as ('{}'): a job running as the control \
+                 plane's user can read its GitHub credential",
+                self.run_as
+            );
+        }
         Ok(())
     }
 
@@ -206,6 +228,20 @@ fn default_work_dir() -> PathBuf {
 }
 fn default_user() -> String {
     "legionr".into()
+}
+fn default_job_user() -> String {
+    "legionr-job".into()
+}
+
+/// A POSIX-portable user name: what `useradd` accepts without overrides.
+fn valid_user_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_lowercase() || c == '_' => {}
+        _ => return false,
+    }
+    name.len() <= 32
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
 }
 fn default_true() -> bool {
     true
@@ -309,6 +345,49 @@ mod tests {
         let mut cfg = RunnerConfig::new(Scope::parse("tbgor/legion").unwrap());
         cfg.run_as = "root".into();
         assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn job_user_defaults_to_a_separate_account() {
+        let cfg = RunnerConfig::new(Scope::parse("tbgor/legion").unwrap());
+        assert_eq!(cfg.job_user, "legionr-job");
+        assert_ne!(cfg.job_user, cfg.run_as);
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn job_user_equal_to_run_as_or_root_is_rejected() {
+        let mut cfg = RunnerConfig::new(Scope::parse("tbgor/legion").unwrap());
+        cfg.job_user = cfg.run_as.clone();
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("must differ"), "{err}");
+        cfg.job_user = "root".into();
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn job_user_must_be_a_plain_user_name() {
+        let mut cfg = RunnerConfig::new(Scope::parse("tbgor/legion").unwrap());
+        for bad in [
+            "",
+            "Job",
+            "9job",
+            "a b",
+            "x ALL=(ALL) NOPASSWD: ALL",
+            "../etc",
+        ] {
+            cfg.job_user = bad.into();
+            assert!(cfg.validate().is_err(), "accepted job_user {bad:?}");
+        }
+        cfg.job_user = "legionr-job_2".into();
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn old_configs_without_job_user_load_with_the_default() {
+        let json = r#"{"scope":{"kind":"repo","owner":"o","repo":"r"}}"#;
+        let cfg: RunnerConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.job_user, "legionr-job");
     }
 
     #[test]
