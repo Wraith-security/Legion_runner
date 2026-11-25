@@ -52,8 +52,14 @@ function egressBlockRules(ips, opts = {}) {
         "-m", "owner", "--uid-owner", uid, "-j", "ACCEPT"]);
     }
   }
+  // Loopback by interface AND by destination: a DNS query redirected to the
+  // forwarder (nat REDIRECT to 127.0.0.1) still carries its original output
+  // interface (eth0) in the filter hook on nf_tables, so `-o lo` alone dropped
+  // it. Anything addressed to loopback never leaves the machine.
+  const loopback = opts.family === 6 ? "::1/128" : "127.0.0.0/8";
   return [
     ["-A", EGRESS_CHAIN, "-o", "lo", "-j", "ACCEPT"],
+    ["-A", EGRESS_CHAIN, "-d", loopback, "-j", "ACCEPT"],
     ["-A", EGRESS_CHAIN, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
     ...dns,
     ...ips.map((ip) => ["-A", EGRESS_CHAIN, "-d", ip, "-j", "ACCEPT"]),
@@ -190,7 +196,8 @@ function applyAll(exec, plan) {
   ];
   for (const [bin, ips, resolvers] of fams) {
     ensureChain(exec, bin, EGRESS_CHAIN, "OUTPUT");
-    applyRules(exec, bin, egressBlockRules(ips, { dnsUids: plan.dnsUids || [] }));
+    const family = bin === "ip6tables" ? 6 : 4;
+    applyRules(exec, bin, egressBlockRules(ips, { dnsUids: plan.dnsUids || [], family }));
     if (plan.extIface) {
       ensureChain(exec, bin, FWD_CHAIN, "FORWARD", ["-o", plan.extIface]);
       applyRules(exec, bin, forwardBlockRules(ips, resolvers));

@@ -25,6 +25,16 @@ test("egress: DNS leaves the box only for root, never for the job user", () => {
   assert.ok(!rules.some((r) => r.includes("53") && !r.includes("--uid-owner")));
 });
 
+test("egress: traffic to loopback passes whatever interface it carries", () => {
+  // nf_tables keeps the original output interface (eth0) on a packet that nat
+  // REDIRECTed to 127.0.0.1, so `-o lo` alone dropped redirected DNS (CI).
+  const v4 = fw.egressBlockRules([], { family: 4 }).map((r) => r.join(" "));
+  assert.ok(v4.includes("-A LEGION_EGRESS -d 127.0.0.0/8 -j ACCEPT"), v4.join("\n"));
+  const v6 = fw.egressBlockRules([], { family: 6 }).map((r) => r.join(" "));
+  assert.ok(v6.includes("-A LEGION_EGRESS -d ::1/128 -j ACCEPT"), v6.join("\n"));
+  assert.ok(v4.indexOf("-A LEGION_EGRESS -d 127.0.0.0/8 -j ACCEPT") < v4.indexOf("-A LEGION_EGRESS -j DROP"));
+});
+
 test("egress: the resolver's own user may be allowed explicitly", () => {
   const rules = fw.egressBlockRules([], { dnsUids: ["991"] });
   const uids = rules.filter((r) => r.includes("--uid-owner")).map((r) => r[r.indexOf("--uid-owner") + 1]);
