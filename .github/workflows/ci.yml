@@ -131,6 +131,12 @@ jobs:
       - name: Unit + regression tests (node:test)
         run: node --test action/*.test.js
 
+      # The action end to end as a hosted runner runs it: a non-root user with
+      # sudo (use_pty), a Runner.Worker parent, block mode with DNS capture and
+      # disable-sudo, then the warden's teardown. Private namespaces, no network.
+      - name: Action smoke (block, DNS capture, disable-sudo, warden)
+        run: sudo scripts/action-smoke.sh
+
       - name: Legion egress report (emit)
         if: always()
         run: node "$GITHUB_WORKSPACE/action/report.js" emit "$RUNNER_TEMP/legion-report.json"

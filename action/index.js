@@ -115,14 +115,27 @@ function setupEvidence() {
   return EVIDENCE.protected;
 }
 
+/// Install `data` as `dest` owned by root with `mode`. The bytes go through a
+/// private temp file: sudo cannot be fed stdin here, because Ubuntu's sudoers
+/// sets `use_pty`, which puts a pty in front of it (/dev/stdin then fails).
+function installAsRoot(data, dest, mode) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "legion-"));
+  const tmp = path.join(dir, "f");
+  try {
+    fs.writeFileSync(tmp, data, { mode: 0o600 });
+    sudo(["install", "-m", mode, "-o", "root", "-g", "root", tmp, dest]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 /// Write an evidence file (root-owned 0600 when protected).
 function writeEvidence(file, data) {
   if (!EVIDENCE.protected) {
     fs.writeFileSync(file, data);
     return;
   }
-  const argv = IS_ROOT ? ["install", "-m", "0600", "/dev/stdin", file] : ["sudo", "-n", "install", "-m", "0600", "/dev/stdin", file];
-  execFileSync(argv[0], argv.slice(1), { input: data, stdio: ["pipe", "ignore", "pipe"] });
+  installAsRoot(data, file, "0600");
 }
 
 /// Read an evidence file as text ("" when unreadable).
@@ -138,10 +151,7 @@ function readEvidence(file) {
 /// Install a verified agent binary root-owned into the evidence dir.
 function installAgent(buf, name) {
   const dest = path.join(EVIDENCE.dir, "bin", name);
-  const argv = IS_ROOT
-    ? ["install", "-m", "0755", "-o", "root", "-g", "root", "/dev/stdin", dest]
-    : ["sudo", "-n", "install", "-m", "0755", "-o", "root", "-g", "root", "/dev/stdin", dest];
-  execFileSync(argv[0], argv.slice(1), { input: buf, stdio: ["pipe", "ignore", "pipe"] });
+  installAsRoot(buf, dest, "0755");
   return dest;
 }
 
@@ -1733,7 +1743,18 @@ if (require.main === module) {
       if (process.env.STATE_isPost === "true") await post();
       else await main();
     } catch (e) {
-      warn(`Legion Runner error: ${e.stack || e}`);
+      // In block mode a setup error must stop the job: carrying on would run
+      // every later step with no enforcement while the job looks protected.
+      if (process.env.STATE_isPost !== "true" && input("egress-policy", "audit").toLowerCase() === "block") {
+        try {
+          removeEgressBlock();
+        } catch {
+          /* nothing to undo */
+        }
+        setFailed(`Legion Runner: block mode could not be set up, stopping the job: ${e.stack || e}`);
+      } else {
+        warn(`Legion Runner error: ${e.stack || e}`);
+      }
     }
   })();
 }
