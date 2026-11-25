@@ -61,4 +61,8 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-e2e-${{ hashFiles('**/Cargo.lock') }}
       - name: install -> provision -> harden -> install
+        # The token only authenticates the actions/runner release lookup in
+        # scripts/install.sh (anonymous calls get rate-limited, HTTP 403).
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: scripts/e2e.sh --mode local

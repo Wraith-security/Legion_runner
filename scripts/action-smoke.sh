@@ -17,7 +17,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 USER_NAME="${SMOKE_USER:-legion-smoke}"
 id "$USER_NAME" >/dev/null 2>&1 || useradd -m -s /bin/bash "$USER_NAME"
 
-exec unshare --net --mount --propagation private bash -s -- "$ROOT" "$USER_NAME" <<'INNER'
+# A private PID namespace too: teardown kills processes by command line, and
+# without one it could reach the host's own processes.
+exec unshare --net --mount --pid --fork --mount-proc --propagation private bash -s -- "$ROOT" "$USER_NAME" <<'INNER'
 set -euo pipefail
 ROOT="$1"; U="$2"
 W="$(mktemp -d)"; chmod 0755 "$W"   # job files, owned by the job user
@@ -94,6 +96,12 @@ cp -a "$ROOT/action" "$W/repo/action"
 [ -d "$ROOT/.legion" ] && cp -a "$ROOT/.legion" "$W/repo/.legion"
 ROOT="$W/repo"
 
+# Another Legion job's forwarder on the same host (different run token). This
+# job's teardown must leave it alone.
+mkdir -p "$W/other"; cp "$ROOT/action/dnscap.js" "$W/other/dnscap.js"
+node -e 'setInterval(() => {}, 1e6)' "$W/other/dnscap.js" legion-run=ffffffffffffffff &
+BYSTANDER=$!
+
 # A parent named Runner.Worker, so the action finds it and starts the warden.
 cp /bin/bash "$W/Runner.Worker"
 cat > "$W/job.sh" <<JOB
@@ -145,6 +153,8 @@ grep -q 'revoked for job steps' "$W/summary.md" && pass "summary says sudo was r
 grep -q 'exfil.evil.test' "$W/summary.md" && pass "summary lists the refused lookup" || fail "summary missing refused lookups"
 if iptables-save | grep -q LEGION || ip6tables-save | grep -q LEGION; then fail "rules left after Runner.Worker exited"; else pass "warden removed every rule"; fi
 [ ! -e /etc/sudoers.d/zz-legion-disable-sudo ] && pass "warden removed the sudo revocation" || fail "sudo revocation left behind"
+kill -0 "$BYSTANDER" 2>/dev/null && pass "another job's forwarder survived this job's teardown" || fail "teardown killed another job's forwarder"
+kill "$BYSTANDER" 2>/dev/null || true
 kill "$UPSTREAM" 2>/dev/null || true
 [ "$FAILED" -eq 0 ] && echo "action smoke passed" || { echo "--- main.log"; cat "$W/main.log"; echo "--- post.log"; cat "$W/post.log"; exit 1; }
 INNER

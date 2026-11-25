@@ -301,3 +301,17 @@ test("agents.json is tracked by git (a global *.json ignore once hid it)", () =>
   }
   assert.equal(tracked, "action/agents.json");
 });
+
+test("teardown kills only this run's daemons when it knows the run token", () => {
+  const tok = "0123456789abcdef";
+  assert.equal(warden.daemonPattern("dnscap.js", tok), "[d]nscap\\.js.*legion-run=0123456789abcdef");
+  assert.equal(warden.daemonPattern("legionr-bpf", tok), "[l]egionr-bpf.*legion-run=0123456789abcdef");
+  // No state (or a mangled token): name only, as before.
+  assert.equal(warden.daemonPattern("dnscap.js", undefined), "[d]nscap\\.js");
+  assert.equal(warden.daemonPattern("dnscap.js", "abc; rm -rf /"), "[d]nscap\\.js");
+  // The pattern matches its own run's command line, not another run's.
+  const re = new RegExp(warden.daemonPattern("dnscap.js", tok));
+  assert.ok(re.test("node /a/action/dnscap.js /run/legion/dns.log 10.0.0.2 53 1 x /r legion-run=0123456789abcdef"));
+  assert.ok(!re.test("node /a/action/dnscap.js /run/legion/dns.log 10.0.0.2 53 1 x /r legion-run=fedcba9876543210"));
+  assert.ok(!re.test("pkill -9 -f [d]nscap\\.js.*legion-run=0123456789abcdef"), "never matches pkill itself");
+});

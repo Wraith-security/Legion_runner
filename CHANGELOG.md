@@ -95,6 +95,12 @@ Unreleased section.
   fixed names in the shared `/tmp`, which collided with files left by another
   user or an earlier step (found by the smoke run in CI). They now go to a
   private directory created per run.
+- Teardown killed Legion's daemons by name across the whole host, so on a
+  shared self-hosted host one job's teardown killed another job's forwarder,
+  agent and monitor (found when the smoke run's warden broke the CI host's own
+  DNS). Each run now tags its daemons with a random token and kills only those.
+- `scripts/install.sh` authenticates its actions/runner release lookup when
+  `GITHUB_TOKEN` is set; the E2E job got HTTP 403 from GitHub's API without it.
 - `cargo-binstall` lookups of `bpf-linker` in CI are authenticated with the
   job token; anonymous calls got HTTP 403 from GitHub's API and failed builds.
 - The forwarder waits for the xtables lock (`iptables -w`) instead of silently
