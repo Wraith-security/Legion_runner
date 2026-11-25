@@ -1,0 +1,16 @@
+[package]
+name = "legionr-bpf-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# Userspace builds enable `user` to get the aya Pod impl; the eBPF crate omits it.
+user = ["aya"]
+
+[dependencies]
+# aya from git to match the aya-build/aya-ebpf API (as in aya-template).
+aya = { git = "https://github.com/aya-rs/aya", rev = "a0b8d491", optional = true }
+
+[lib]
+path = "src/lib.rs"

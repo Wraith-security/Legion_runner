@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Create the Legion Runner GitHub App</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    max-width: 640px; margin: 6vh auto; padding: 0 1.2rem;
+  }
+  h1 { font-size: 1.4rem; }
+  p, li { color: #444; }
+  @media (prefers-color-scheme: dark) { p, li { color: #bbb; } }
+  fieldset { border: 1px solid #8884; border-radius: 8px; padding: 1rem 1.2rem; margin: 1.4rem 0; }
+  legend { padding: 0 .4rem; font-weight: 600; }
+  label { display: block; margin: .6rem 0 .2rem; font-weight: 600; }
+  input[type=text] { width: 100%; padding: .5rem .6rem; font-size: 1rem; border: 1px solid #8886; border-radius: 6px; background: transparent; color: inherit; }
+  .radio { font-weight: 400; display: flex; gap: .5rem; align-items: center; margin: .3rem 0; }
+  button { margin-top: 1.2rem; padding: .7rem 1.3rem; font-size: 1rem; font-weight: 600; border: 0; border-radius: 6px; background: #2da44e; color: #fff; cursor: pointer; }
+  button:hover { background: #2c974b; }
+  code { background: #8882; padding: .1rem .3rem; border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; margin: .6rem 0; }
+  th, td { text-align: left; padding: .3rem .5rem; border-bottom: 1px solid #8883; font-size: .9rem; }
+  small { color: #888; }
+</style>
+</head>
+<body>
+<h1>Create the “Legion Runner” GitHub App</h1>
+<p>
+  This page opens GitHub’s App-creation screen with every permission
+  pre-filled. It runs entirely in your browser and sends nothing anywhere
+  except the GitHub form you submit. After you confirm, generate a private key
+  and copy the App ID, then install the App on your org(s).
+</p>
+
+<p>Permissions it will request:</p>
+<table>
+  <tr><th>Scope</th><th>Permission</th><th>Level</th></tr>
+  <tr><td>Repository</td><td>Administration</td><td>Read &amp; write</td></tr>
+  <tr><td>Repository</td><td>Actions</td><td>Read &amp; write</td></tr>
+  <tr><td>Repository</td><td>Metadata</td><td>Read</td></tr>
+  <tr><td>Organization</td><td>Self-hosted runners</td><td>Read &amp; write</td></tr>
+</table>
+
+<fieldset>
+  <legend>Who owns the App?</legend>
+  <label class="radio"><input type="radio" name="owner" value="user" checked> My personal account</label>
+  <label class="radio"><input type="radio" name="owner" value="org"> An organization</label>
+  <label for="org">Organization login (only if you picked “An organization”)</label>
+  <input type="text" id="org" placeholder="e.g. Wraith-security" autocomplete="off">
+  <small>The App is owned by one account. To install it across several of your orgs, keep it public (below) and install it on each.</small>
+</fieldset>
+
+<fieldset>
+  <legend>Visibility</legend>
+  <label class="radio"><input type="radio" name="public" value="false" checked> Private — only your account/orgs can install it</label>
+  <label class="radio"><input type="radio" name="public" value="true"> Public — installable on any account (choose this to cover multiple orgs)</label>
+</fieldset>
+
+<button id="create">Create the App on GitHub →</button>
+
+<p><small>
+  App names are globally unique. If “Legion Runner” is taken, GitHub will ask
+  for another name — it doesn’t matter to the runner. After creating: generate a
+  private key, copy the App ID, and install the App. Then add
+  <code>LEGION_E2E_APP_ID</code> / <code>LEGION_E2E_APP_PRIVATE_KEY</code> as
+  repo secrets to enable the live e2e.
+</small></p>
+
+<script>
+document.getElementById('create').addEventListener('click', function () {
+  var isOrg = document.querySelector('input[name=owner]:checked').value === 'org';
+  var org = document.getElementById('org').value.trim();
+  if (isOrg && !org) { alert('Enter the organization login, or choose “My personal account”.'); return; }
+  var isPublic = document.querySelector('input[name=public]:checked').value === 'true';
+
+  var manifest = {
+    name: 'Legion Runner',
+    url: 'https://github.com/Wraith-security/legion_runner',
+    description: 'Registers and manages hardened, ephemeral, single-use self-hosted Actions runners.',
+    public: isPublic,
+    hook_attributes: { active: false },
+    default_events: [],
+    default_permissions: {
+      administration: 'write',
+      actions: 'write',
+      metadata: 'read',
+      organization_self_hosted_runners: 'write'
+    }
+  };
+
+  var action = isOrg
+    ? 'https://github.com/organizations/' + encodeURIComponent(org) + '/settings/apps/new'
+    : 'https://github.com/settings/apps/new';
+
+  var form = document.createElement('form');
+  form.method = 'POST';
+  form.action = action;
+  form.target = '_blank';
+  var field = document.createElement('input');
+  field.type = 'hidden';
+  field.name = 'manifest';
+  field.value = JSON.stringify(manifest);
+  form.appendChild(field);
+  document.body.appendChild(form);
+  form.submit();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+# Legion Runner — eBPF capture agent (aya). Separate workspace so the eBPF
+# toolchain (nightly + bpf-linker) never affects the main `cargo build`.
+[workspace]
+resolver = "2"
+# The eBPF crate is a member so aya-build can resolve `--package legionr-bpf-ebpf`,
+# but it's kept OUT of default-members so host `cargo build`/`test` never compiles
+# it for the host (it's #![no_std]/#![no_main] — host build fails). aya-build
+# compiles it for the BPF target via build.rs.
+members = ["legionr-bpf", "legionr-bpf-common", "legionr-bpf-ebpf"]
+default-members = ["legionr-bpf", "legionr-bpf-common"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[profile.release]
+# eBPF programs must keep debug info (BTF) and not be stripped.
+debug = 2

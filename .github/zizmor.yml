@@ -1,0 +1,22 @@
+# zizmor configuration (https://docs.zizmor.sh/configuration/).
+# Runs on every workflow via .github/workflows/zizmor.yml.
+
+rules:
+  # Every third-party action MUST be pinned to a commit SHA. The one exception
+  # is our OWN action, Wraith-security/legion_runner, which we dogfood on its
+  # readable release tag (@v1.0.x): it is first-party, we control its releases,
+  # and Dependabot bumps it. A ref-pin is acceptable there, hash-pin everywhere
+  # else.
+  unpinned-uses:
+    config:
+      policies:
+        Wraith-security/legion_runner: ref-pin
+        "*": hash-pin
+
+  # release.yml uses `workflow_run` on purpose: the release runs only after the
+  # CI workflow succeeds on main (the gate is the whole point). It never checks
+  # out or executes untrusted PR code; it builds the validated main SHA. This is
+  # a reviewed, intentional use of the trigger.
+  dangerous-triggers:
+    ignore:
+      - release.yml

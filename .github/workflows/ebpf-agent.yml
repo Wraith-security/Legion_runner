@@ -1,0 +1,99 @@
+name: eBPF agent
+
+# Builds and tests the Rust/aya eBPF capture agent (agent/). Separate from the
+# main CI because it needs the eBPF toolchain (nightly + bpf-linker). This is
+# the iteration surface for the eBPF backend; the action runs fine without it
+# (it falls back to the ss//proc sampler).
+
+on:
+  # PR gate ONLY (no `push:` trigger: no need to re-run on main after a merge).
+  # It is a reliable required status check. Docs-only changes (Markdown / LICENSE
+  # / docs/) are skipped because they can't affect the agent; docs-passthrough.yml
+  # reports this check green for those PRs so the required gate stays satisfied
+  # and they remain mergeable.
+  pull_request:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: this self-test only reads the repo.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build & test legionr-bpf
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Harden runner (Legion, BLOCK)
+        uses: Wraith-security/legion_runner@v1.0.61   # dogfood our own action
+        with:
+          egress-policy: block
+          allowed-presets: cargo, rust
+          policy-file: .legion/egress-allowed.txt
+          ebpf: 'off'
+          dns-capture: 'true'
+          job-summary: 'false'   # self-test, not a report: keep it out of the summary
+
+      - name: Install nightly + rust-src
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # nightly
+        with:
+          toolchain: nightly
+          components: rust-src, clippy, rustfmt
+
+      - name: Install cargo-binstall
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-binstall
+      - name: Install bpf-linker (prebuilt)
+        # Use the prebuilt binary, not `cargo install`. `cargo install bpf-linker`
+        # compiles llvm-sys, which needs a system LLVM matching bpf-linker's
+        # pinned version (currently LLVM 23 via llvm-sys 231); the runner has no
+        # such llvm-config, so the build fails. The prebuilt binary ships its own.
+        run: cargo binstall --no-confirm --disable-strategies compile bpf-linker
+
+      - name: Userspace unit tests (no kernel needed)
+        run: cargo test -p legionr-bpf
+
+      - name: Build agent (compiles the eBPF program)
+        run: cargo build --release
+
+      - name: Smoke-load on the runner kernel (has BTF)
+        run: |
+          sudo timeout 5 ./target/release/legionr-bpf > /tmp/legionc.log 2>/tmp/legionc.err &
+          sleep 1
+          # Generate a connection to capture.
+          curl -sS -o /dev/null --max-time 5 https://example.com || true
+          sleep 1
+          echo "=== captured ==="; sudo cat /tmp/legionc.log | head -20 || true
+          echo "=== stderr ==="; sudo cat /tmp/legionc.err | head -20 || true
+          # The claim is "names the process behind every connection", so assert
+          # the comm field is populated rather than just that a line appeared.
+          # A capture with an empty comm satisfies a bare `grep "LEGIONC "`, so
+          # that check could not tell real attribution from a blank field.
+          # comm may contain spaces (".NET TP Worker", "git remote"), so the
+          # field is "rest of line, non-empty" rather than a single token.
+          sudo grep -qE '^LEGIONC [0-9a-fA-F.:]+ [0-9]+ [0-9]+ .+$' /tmp/legionc.log || {
+            echo "FAIL: no capture line with all five fields populated (see stderr above)"
+            exit 1; }
+          echo "PASS: captured a connection with a named process"
+
+          # Exactly one connection was generated above, by curl. If attribution
+          # works, curl is among the captured comms. This asserts the claim
+          # itself rather than a proxy for it.
+          sudo grep -qE '^LEGIONC [0-9a-fA-F.:]+ [0-9]+ [0-9]+ curl$' /tmp/legionc.log || {
+            echo "FAIL: a connection was captured but not attributed to curl"
+            echo "captured comms were:"; sudo awk '{print $5}' /tmp/legionc.log | sort -u
+            exit 1; }
+          echo "PASS: the curl connection is attributed to process 'curl'"

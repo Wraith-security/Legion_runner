@@ -1,0 +1,64 @@
+name: E2E
+
+# End-to-end lifecycle coverage for the control plane. Unit tests prove the
+# pure builders; this proves the binary actually installs, provisions, hardens,
+# and tears down.
+#
+# One job:
+#   local  - always runs. install -> provision -> harden -> install, asserting
+#            the deploy-blocker fixes (#71/#73/#74) in the generated + installed
+#            artifacts. No credentials.
+#
+# A second `live` job used to register a real ephemeral runner against a fixed
+# external scope. It was removed: the scope was unreachable from this org, so
+# the tier could only skip (silently) or fail (noisily), and neither state told
+# us anything about the runner. `scripts/e2e.sh --mode live` still exists and
+# can be pointed at any scope you control via E2E_SCOPE, it is just not wired
+# into CI.
+#
+# This workflow is intentionally NOT part of the CI gate that cuts releases.
+# Promote the `local` job into a required check if you want it to gate merges.
+
+on:
+  pull_request:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE']
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE']
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  local:
+    name: Local lifecycle e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: stable
+      - name: Cache cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-e2e-${{ hashFiles('**/Cargo.lock') }}
+      - name: install -> provision -> harden -> install
+        run: scripts/e2e.sh --mode local

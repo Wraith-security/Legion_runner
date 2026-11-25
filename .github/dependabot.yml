@@ -1,0 +1,55 @@
+version: 2
+
+# Tool pack: one place Dependabot watches every toolchain surface in the repo.
+# The agent/ eBPF crate is its OWN Cargo workspace (excluded from the root
+# workspace), so it needs its own entry — the root cargo job can't see it.
+#
+# Each ecosystem:
+#   * cooldown 7 days. Wait 7 days after a release before opening a PR, so
+#     yanked or hotfixed versions (and the window where a compromised release is
+#     caught and pulled) settle before we adopt them.
+#   * grouped per ecosystem. All deps batched into ONE PR (not one per package):
+#     a minor/patch group (auto-merged once CI is green, see
+#     dependabot-auto-merge.yml) and a separate major group (left for review).
+updates:
+  # ── Rust: main workspace (legionr-core, legionr-cli, legionr-fim) ──────────
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    groups:
+      cargo-minor:
+        update-types: ["minor", "patch"]
+      cargo-major:
+        update-types: ["major"]
+
+  # ── Rust: eBPF agent workspace (its own toolchain; aya is git-pinned) ──────
+  - package-ecosystem: cargo
+    directory: "/agent"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    groups:
+      agent-minor:
+        update-types: ["minor", "patch"]
+      agent-major:
+        update-types: ["major"]
+
+  # ── GitHub Actions used across all workflows ───────────────────────────────
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    groups:
+      actions-minor:
+        update-types: ["minor", "patch"]
+      actions-major:
+        update-types: ["major"]

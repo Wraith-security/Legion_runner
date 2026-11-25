@@ -1,0 +1,4 @@
+[toolchain]
+# eBPF compilation needs nightly + rust-src (build-std) and the bpf-linker.
+channel = "nightly"
+components = ["rust-src", "rustfmt", "clippy"]

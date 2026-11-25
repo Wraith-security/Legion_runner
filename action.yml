@@ -1,0 +1,110 @@
+name: 'Legion Runner'
+description: 'Block CI supply-chain attacks: firewall egress, attribute connections to processes with eBPF, and detect file tampering.'
+author: 'Legion'
+branding:
+  icon: 'shield'
+  color: 'green'
+
+inputs:
+  egress-policy:
+    description: '"audit" (monitor only, never breaks builds) or "block" (default-deny egress allowlist).'
+    required: false
+    default: 'audit'
+  allowed-endpoints:
+    description: >-
+      Endpoints to permit in block mode, one per line or space/comma separated,
+      as "host" or "host:port" ( "api.nuget.org:443"). GitHub/Actions
+      endpoints are always allowed when allow-github is true.
+    required: false
+    default: ''
+  allowed-presets:
+    description: >-
+      Comma/space-separated curated ecosystem allowlists to permit in block mode,
+      so common toolchains "just work" without listing endpoints. Known presets:
+      npm, yarn, pnpm, pip, pypi, cargo, rust, go, maven, gradle, nuget, apt,
+      debian, docker. Example: "cargo, apt".
+    required: false
+    default: ''
+  allow-github:
+    description: 'Always allow GitHub + Actions endpoints (so the job can still talk to GitHub).'
+    required: false
+    default: 'true'
+  policy-file:
+    description: >-
+      Path (in the repo) to the learned egress allowlist. In audit mode the
+      observed destinations are surfaced as a baseline; in block mode this file's
+      hosts are part of the allowlist. Commit it to enforce a reviewable policy.
+    required: false
+    default: '.legion/egress-allowed.txt'
+  learn:
+    description: >-
+      In audit mode, write/update the policy-file with the destinations observed
+      this run (otherwise the baseline is only printed to the job summary).
+    required: false
+    default: 'false'
+  learned-baseline:
+    description: >-
+      In block mode, also allow destinations previously learned into the Actions
+      cache (the zero-config learn→enforce baseline). Set to "false" to enforce
+      ONLY the explicit allowlist (inline endpoints + policy-file + GitHub), with
+      no cache read or write.
+    required: false
+    default: 'true'
+  disable-sudo:
+    description: 'Revoke the runner user''s sudo after setup, to stop later privilege use.'
+    required: false
+    default: 'false'
+  disable-telemetry:
+    description: 'Do not emit any lifecycle events (Legion link / step summary stays local).'
+    required: false
+    default: 'false'
+  legion-link:
+    description: 'Optional Legion desktop endpoint (e.g. http://host:3000) to stream job egress events to.'
+    required: false
+    default: ''
+  dns-capture:
+    description: >-
+      Route the resolver through a local logging forwarder to map connections to
+      the exact domains the job resolved (more accurate than reverse DNS).
+      Requires sudo; falls back to reverse DNS if unavailable.
+    required: false
+    default: 'true'
+  ebpf:
+    description: >-
+      Use the Rust/aya eBPF agent (legionr-bpf) for socket-layer connection
+      capture with process attribution when present. "auto" (use if available)
+      or "off". Falls back to the ss//proc sampler otherwise.
+    required: false
+    default: 'auto'
+  sample-interval:
+    description: 'Seconds between egress samples for the monitor.'
+    required: false
+    default: '3'
+  file-integrity:
+    description: >-
+      Detect file tampering during the job. The Rust legionr-fim agent snapshots
+      high-value targets at job start (credential/config files, the repo's .git
+      config + hooks, and any already-checked-out source) and reports anything
+      overwritten, deleted, or chmod'd at job end. "auto" (use if available) or
+      "off". Skips silently if the agent binary can't be obtained.
+    required: false
+    default: 'auto'
+  fim-extra-paths:
+    description: >-
+      Additional files to watch for tampering, one per line or space/comma
+      separated. Useful for project-specific secrets or scripts.
+    required: false
+    default: ''
+  job-summary:
+    description: >-
+      Write the outbound-connections table to the GitHub job summary. Set to
+      "false" to keep monitoring/enforcement fully active but suppress the table
+      (useful when many jobs in one workflow each harden and you only want the
+      summary once).
+    required: false
+    default: 'true'
+
+runs:
+  using: 'node24'
+  main: 'action/index.js'
+  post: 'action/index.js'

@@ -1,0 +1,101 @@
+name: Enforce self-test
+
+# Deterministic proof that block-mode enforcement works: an inline allowlist
+# permits example.com (seeded from its resolved IPs) while an unlisted host
+# (wikipedia) is denied. Uses the inline path (no auto-learn) so it's reliable
+# regardless of how names resolve. The auto-learn + eBPF capture round-trip is
+# exercised separately in ebpf-agent.yml.
+
+on:
+  # PR gate ONLY. Deliberately no `push:` trigger: a self-test does not need to
+  # re-run on main after a merge (the PR already validated it), and re-running it
+  # on main just spins/wastes minutes. Docs-only changes (Markdown / LICENSE /
+  # docs/) are skipped because they can't affect enforcement; docs-passthrough.yml
+  # reports this check green for those PRs so the required gate stays satisfied
+  # and they remain mergeable.
+  pull_request:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: this self-test only reads the repo.
+permissions:
+  contents: read
+
+jobs:
+  enforce:
+    name: Block allows allowlisted, denies the rest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10   # hard cap so a stuck job can't run to the 6h default
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Harden (block) with an inline allowlist
+        # Tests THIS repo's enforcement code (not the published action) — that's
+        # the point of the self-test. Consumers reference the Marketplace @v1.
+        uses: ./
+        with:
+          egress-policy: block
+          allowed-endpoints: |
+            example.com
+          dns-capture: 'false'        # exercise the static-seed enforcement path
+          job-summary: 'false'        # self-test, not a report: keep it out of the summary
+          ebpf: 'off'                 # this test is about the firewall, not
+                                      # capture — no agent to spawn/clean up
+          learned-baseline: 'false'   # inline allowlist ONLY — ignore the shared
+                                      # Actions-cache baseline so the deny case is
+                                      # deterministic (not polluted by other runs)
+
+      - name: Allowlisted host allowed, unlisted host denied
+        run: |
+          set +e
+          curl -sS --max-time 25 -o /dev/null https://example.com;        learned=$?
+          curl -sS --max-time 25 -o /dev/null https://www.wikipedia.org;  unlearned=$?
+          echo "example.com (allowlisted) exit=$learned   (expect 0 = allowed)"
+          echo "wikipedia   (not listed)  exit=$unlearned (expect non-zero = denied)"
+          if [ "$learned" -eq 0 ] && [ "$unlearned" -ne 0 ]; then
+            echo "PASS — block enforcement verified (allow + deny)."
+          else
+            echo "FAIL — allow/deny did not match expectations."
+            exit 1
+          fi
+
+  # Reliability gate: run the FULL block path — firewall + DNS-capture forwarder
+  # (dynamic allow-by-domain) + eBPF agent + the firewall/daemon teardown — and
+  # prove the job FINALIZES. If any daemon leaks or the firewall isn't torn down,
+  # the runner hangs at teardown and this job hits the timeout and fails. This is
+  # the guard for the whole class of teardown-hang bugs.
+  full-stack:
+    name: Block + dns-capture + eBPF finalizes (no teardown hang)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Harden (block) with all daemons on
+        uses: ./
+        with:
+          egress-policy: block
+          allowed-presets: cargo        # exercise the curated-preset allowlist path
+          allowed-endpoints: |
+            example.com
+          dns-capture: 'true'           # DNS forwarder + dynamic allow + its teardown
+          job-summary: 'false'          # self-test, not a report: keep it out of the summary
+          ebpf: 'auto'                  # agent path (fail-closed download → /proc)
+          learned-baseline: 'false'
+
+      - name: Allowlisted host reachable via dynamic allow-by-domain
+        run: |
+          set -e
+          curl -sS --max-time 25 -o /dev/null https://example.com
+          echo "example.com reachable under block + dns-capture — dynamic allow works."
+          # The decisive assertion is implicit: the post step tears down the
+          # firewall + every daemon; if it doesn't, this job times out.

