@@ -91,6 +91,12 @@ Unreleased section.
   allowed. Diagnosis by deduction from the job logs; the DNS redirect above
   removes the dependency on that file, and the self-test restarts resolved and
   checks allow-by-domain still works.
+- The action wrote its resolv.conf, nsswitch, resolved and sudoers drafts to
+  fixed names in the shared `/tmp`, which collided with files left by another
+  user or an earlier step (found by the smoke run in CI). They now go to a
+  private directory created per run.
+- `cargo-binstall` lookups of `bpf-linker` in CI are authenticated with the
+  job token; anonymous calls got HTTP 403 from GitHub's API and failed builds.
 - The forwarder waits for the xtables lock (`iptables -w`) instead of silently
   failing to open an allowlisted IP while another process holds it.
 - `legionr harden --install` wrote an nftables file without the Tailscale rules
