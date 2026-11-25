@@ -1,22 +1,31 @@
 #!/usr/bin/env bash
 # Legion Runner — Linux install script (the "backbone").
 #
-# Creates an unprivileged service user, fetches GitHub's official runner
-# release, unpacks it, builds the `legionr` control-plane binary, and lays
-# down the data directories. Hardening (systemd unit, sysctl, firewall) is a
-# separate step: scripts/harden.sh.
+# Creates two unprivileged users, fetches GitHub's official runner release,
+# unpacks it as a read-only template, builds the `legionr` control-plane binary,
+# and lays down the data directories. Hardening (systemd unit, sysctl, firewall)
+# is a separate step: scripts/harden.sh.
+#
+# Two users, on purpose:
+#   legionr      runs the control plane and is the only user that can read the
+#                GitHub credential (/etc/legion-runner, root:legionr 0750).
+#   legionr-job  runs every job. It owns only the per-job scratch root
+#                (_work, mode 0700), which legionr empties before and after
+#                each job. It cannot read the credential or write the runner.
 #
 # Usage (as root):
 #   sudo ./scripts/install.sh
 #
 # Environment overrides:
-#   LEGIONR_USER       service user            (default: legionr)
+#   LEGIONR_USER       control-plane user      (default: legionr)
+#   LEGIONR_JOB_USER   user jobs run as        (default: legionr-job)
 #   LEGIONR_HOME       state dir               (default: /opt/legion-runner)
 #   RUNNER_VERSION     actions/runner version  (default: latest release)
 #   RUNNER_ARCH        x64 | arm64             (default: auto-detected)
 set -euo pipefail
 
 LEGIONR_USER="${LEGIONR_USER:-legionr}"
+LEGIONR_JOB_USER="${LEGIONR_JOB_USER:-legionr-job}"
 LEGIONR_HOME="${LEGIONR_HOME:-/opt/legion-runner}"
 RUNNER_DIR="${LEGIONR_HOME}/runner"
 WORK_DIR="${LEGIONR_HOME}/_work"
@@ -38,13 +47,22 @@ if [ -z "${RUNNER_ARCH:-}" ]; then
     esac
 fi
 
-# ── Service user (no shell, no login, dedicated home) ────────────────────────
-if id "$LEGIONR_USER" >/dev/null 2>&1; then
-    log "service user '$LEGIONR_USER' already exists"
-else
-    log "creating unprivileged service user '$LEGIONR_USER'"
-    useradd --system --create-home --home-dir "$LEGIONR_HOME" \
-            --shell /usr/sbin/nologin "$LEGIONR_USER"
+[ "$LEGIONR_USER" != "$LEGIONR_JOB_USER" ] || die "LEGIONR_JOB_USER must differ from LEGIONR_USER"
+
+# ── Users (no shell, no login, no home: jobs get a fresh HOME each time) ─────
+for u in "$LEGIONR_USER" "$LEGIONR_JOB_USER"; do
+    if id "$u" >/dev/null 2>&1; then
+        log "user '$u' already exists"
+    else
+        log "creating unprivileged user '$u'"
+        useradd --system --no-create-home --home-dir /nonexistent \
+                --shell /usr/sbin/nologin "$u"
+    fi
+done
+# The job user must not share a group with the control plane, or it could read
+# the credential files that are group-readable by legionr.
+if id -nG "$LEGIONR_JOB_USER" | tr ' ' '\n' | grep -qx "$LEGIONR_USER"; then
+    die "'$LEGIONR_JOB_USER' is in group '$LEGIONR_USER'; remove it (gpasswd -d $LEGIONR_JOB_USER $LEGIONR_USER)"
 fi
 mkdir -p "$RUNNER_DIR" "$WORK_DIR" /etc/legion-runner
 
@@ -54,8 +72,13 @@ if [ -x "${RUNNER_DIR}/run.sh" ]; then
 else
     if [ -z "${RUNNER_VERSION:-}" ]; then
         log "resolving latest actions/runner release"
-        RUNNER_VERSION="$(curl -fsSL https://api.github.com/repos/actions/runner/releases/latest \
-            | grep -m1 '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')"
+        # Read the whole response, then match in bash. Piping curl into
+        # `grep -m1` closed the pipe early, curl exited 23 and, under pipefail,
+        # took the install down with it.
+        latest_json="$(curl -fsSL https://api.github.com/repos/actions/runner/releases/latest)"
+        if [[ "$latest_json" =~ \"tag_name\":[[:space:]]*\"v([^\"]+)\" ]]; then
+            RUNNER_VERSION="${BASH_REMATCH[1]}"
+        fi
         [ -n "$RUNNER_VERSION" ] || die "could not resolve runner version (set RUNNER_VERSION)"
     fi
     TARBALL="actions-runner-linux-${RUNNER_ARCH}-${RUNNER_VERSION}.tar.gz"
@@ -79,16 +102,35 @@ else
 fi
 
 # ── Lock down ownership / perms ──────────────────────────────────────────────
-chown -R "$LEGIONR_USER:$LEGIONR_USER" "$LEGIONR_HOME"
-chmod 0750 "$LEGIONR_HOME"
+# The runner is a read-only template owned by root: every job runs from its own
+# copy, so nothing a job does can reach the next one through the runner files.
+chown root:root "$LEGIONR_HOME"
+chmod 0755 "$LEGIONR_HOME"
+chown -R root:root "$RUNNER_DIR"
+chmod -R go-w "$RUNNER_DIR"
+rm -rf "${RUNNER_DIR}/_work" "${RUNNER_DIR}/_diag" "${RUNNER_DIR}/.runner" \
+       "${RUNNER_DIR}/.credentials" "${RUNNER_DIR}/.credentials_rsaparams"
+# The per-job scratch root belongs to the job user alone.
+chown "$LEGIONR_JOB_USER:$LEGIONR_JOB_USER" "$WORK_DIR"
+chmod 0700 "$WORK_DIR"
+# Config and credentials: readable by the control plane, never by jobs.
+chown root:"$LEGIONR_USER" /etc/legion-runner
+chmod 0750 /etc/legion-runner
 
 log "install complete."
 cat <<EOF
 
-Next steps:
-  1. export LEGIONR_TOKEN=<github PAT with manage-runners on the target scope>
-  2. sudo -u ${LEGIONR_USER} -E legionr provision <owner/repo> \\
-         --config /etc/legion-runner/default.json
-  3. sudo ./scripts/harden.sh                  # systemd + sysctl + firewall
-  4. sudo systemctl enable --now legionr@default
+Next steps (as root):
+  1. Write the config (no secrets in it):
+       LEGIONR_DATA_DIR=${LEGIONR_HOME} legionr provision <owner/repo> \\
+           --config /etc/legion-runner/default.json --job-user ${LEGIONR_JOB_USER}
+  2. Put the credential in /etc/legion-runner/default.env (root:root 0600):
+       LEGIONR_APP_ID=... and LEGIONR_APP_PRIVATE_KEY_FILE=/etc/legion-runner/app.pem
+     with the key itself root:${LEGIONR_USER} 0640 (see docs/github-app.md),
+     or LEGIONR_TOKEN=<PAT with manage-runners>.
+  3. ./scripts/harden.sh                       # systemd + sysctl + firewall
+  4. legionr --config /etc/legion-runner/default.json check-isolation
+     (proves a job cannot read the credential or write the runner), then:
+     systemctl enable --now legionr@default
+     The unit repeats that check before every job and refuses to run on failure.
 EOF

@@ -90,6 +90,7 @@ impl<'a> HardeningProfile<'a> {
     /// restrict the syscall surface, and isolate namespaces.
     pub fn systemd_unit(&self) -> String {
         let user = &self.cfg.run_as;
+        let job_user = &self.cfg.job_user;
         let runner_dir = self.cfg.runner_dir.display();
         let work_dir = self.cfg.work_dir.display();
         format!(
@@ -111,9 +112,10 @@ impl<'a> HardeningProfile<'a> {
              ExecStart=/usr/local/bin/legionr run --once --config /etc/legion-runner/%i.json\n\
              # Credential for runner registration, loaded from a root-owned env\n\
              # file (services do not inherit a shell env). Put the GitHub App\n\
-             # config here — LEGIONR_APP_ID + LEGIONR_APP_PRIVATE_KEY_FILE — or a\n\
-             # LEGIONR_TOKEN. Optional (leading '-'): the unit still starts if the\n\
-             # file is absent, e.g. when the credential is provided another way.\n\
+             # config here (LEGIONR_APP_ID and LEGIONR_APP_PRIVATE_KEY_FILE) or a\n\
+             # LEGIONR_TOKEN. Jobs never see these: they run as the job user with\n\
+             # an environment rebuilt from a short allowlist. Optional (leading\n\
+             # '-'): the unit still starts if the file is absent.\n\
              EnvironmentFile=-/etc/legion-runner/%i.env\n\
              Restart=always\n\
              RestartSec=2\n\
@@ -124,17 +126,19 @@ impl<'a> HardeningProfile<'a> {
              Group={user}\n\
              DynamicUser=no\n\
              \n\
+             # Jobs run as {job_user}, never as {user}: a job sharing the control\n\
+             # plane's uid could read its credential. legionr starts each job as\n\
+             # {job_user} from a fresh copy of the runner, with its own HOME and\n\
+             # TMP under {work_dir}, and wipes all of it afterwards.\n\
+             \n\
              # ── Filesystem ──────────────────────────────────────────────\n\
              ProtectSystem=strict\n\
              ProtectHome=true\n\
-             ReadWritePaths={runner_dir} {work_dir}\n\
-             # Writable HOME for the job's toolchains (pip/npm/cargo caches).\n\
-             # systemd creates %S/legion-runner under /var/lib, owns it as the\n\
-             # service user, and adds it to the read-write set. Without a writable\n\
-             # HOME, ProtectHome=true + ProtectSystem=strict leave $HOME read-only\n\
-             # and every package step fails on its first write.\n\
-             StateDirectory=legion-runner\n\
-             Environment=HOME=%S/legion-runner\n\
+             # Only the per-job scratch root is writable. The installed runner\n\
+             # ({runner_dir}) stays a read-only template no job can modify.\n\
+             ReadWritePaths={work_dir}\n\
+             ReadOnlyPaths={runner_dir}\n\
+             UMask=0077\n\
              PrivateTmp=true\n\
              PrivateDevices=true\n\
              ProtectKernelTunables=true\n\
@@ -147,10 +151,13 @@ impl<'a> HardeningProfile<'a> {
              ProcSubset=pid\n\
              \n\
              # ── Privilege ───────────────────────────────────────────────\n\
+             # Only CAP_SETUID and CAP_SETGID, so legionr can start each job as\n\
+             # {job_user}. The job itself gets none: legionr clears every capability\n\
+             # set and sets no_new_privs before exec, and checks that before each job.\n\
              NoNewPrivileges=true\n\
              RestrictSUIDSGID=true\n\
-             CapabilityBoundingSet=\n\
-             AmbientCapabilities=\n\
+             CapabilityBoundingSet=CAP_SETUID CAP_SETGID\n\
+             AmbientCapabilities=CAP_SETUID CAP_SETGID\n\
              \n\
              # ── Namespaces & kernel surface ─────────────────────────────\n\
              RestrictNamespaces=true\n\
@@ -161,6 +168,10 @@ impl<'a> HardeningProfile<'a> {
              SystemCallArchitectures=native\n\
              SystemCallFilter=@system-service\n\
              SystemCallFilter=~@privileged @resources @obsolete\n\
+             # @privileged includes setuid/setgid/setgroups and capset; allow\n\
+             # those back for the drop to {job_user} (capset clears the job's\n\
+             # capabilities). chroot, mount and the rest of @privileged stay denied.\n\
+             SystemCallFilter=@setuid capset\n\
              \n\
              # ── Resource limits (DoS containment) ───────────────────────\n\
              TasksMax=512\n\
@@ -481,12 +492,39 @@ mod tests {
     }
 
     #[test]
-    fn unit_gives_the_runner_a_writable_home() {
-        // #74: ProtectSystem=strict + ProtectHome=true leave $HOME read-only;
-        // a systemd StateDirectory provides a writable HOME for pip/npm/cargo.
-        let unit = HardeningProfile::new(&cfg()).systemd_unit();
-        assert!(unit.contains("StateDirectory=legion-runner"));
-        assert!(unit.contains("Environment=HOME=%S/legion-runner"));
+    fn unit_isolates_jobs_from_the_control_plane() {
+        let c = cfg();
+        let unit = HardeningProfile::new(&c).systemd_unit();
+        let runner = c.runner_dir.display().to_string();
+        let work = c.work_dir.display().to_string();
+        // Only the per-job scratch root is writable; the runner is a template.
+        assert!(unit.contains(&format!("ReadWritePaths={work}\n")), "{unit}");
+        assert!(
+            unit.contains(&format!("ReadOnlyPaths={runner}\n")),
+            "{unit}"
+        );
+        let rw = unit
+            .lines()
+            .find(|l| l.starts_with("ReadWritePaths="))
+            .unwrap();
+        assert!(!rw.contains(&runner), "runner template is writable: {rw}");
+        // No HOME shared between jobs (each job gets its own under work_dir).
+        assert!(!unit.contains("StateDirectory="), "persistent HOME is back");
+        assert!(!unit.contains("Environment=HOME="), "shared HOME is back");
+        // Exactly the two capabilities needed to start jobs as the job user.
+        assert!(unit.contains("CapabilityBoundingSet=CAP_SETUID CAP_SETGID\n"));
+        assert!(unit.contains("AmbientCapabilities=CAP_SETUID CAP_SETGID\n"));
+        assert!(unit.contains("NoNewPrivileges=true"));
+        // @privileged denies setuid; @setuid must come back AFTER that line.
+        let deny = unit.find("SystemCallFilter=~@privileged").unwrap();
+        let allow = unit
+            .find("SystemCallFilter=@setuid capset\n")
+            .expect("@setuid and capset not re-allowed");
+        assert!(allow > deny, "@setuid must follow the @privileged deny");
+        assert!(
+            unit.contains("legionr-job"),
+            "unit does not name the job user"
+        );
     }
 
     #[test]

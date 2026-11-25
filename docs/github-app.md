@@ -104,7 +104,21 @@ private key and it mints (and, in the `run` loop, refreshes) its own
 installation tokens. No PAT, and no external token-minting helper on the host.
 
 The generated unit already loads `EnvironmentFile=-/etc/legion-runner/<instance>.env`,
-so you just create that file (root-owned, `0600`) with the credential:
+so you just create that file (`root:root`, `0600`) with the credential.
+
+Who can read what matters here. `legionr` runs as the `legionr` user and jobs
+run as a separate `legionr-job` user (see `scripts/install.sh`), so the key must
+be readable by `legionr` and by nobody else:
+
+| Path | Owner | Mode |
+|------|-------|------|
+| `/etc/legion-runner/` | `root:legionr` | `0750` |
+| `/etc/legion-runner/<instance>.env` | `root:root` | `0600` (systemd reads it) |
+| `/etc/legion-runner/app.pem` | `root:legionr` | `0640` |
+
+Never make the key readable by the job user or by a group it belongs to.
+`legionr check-isolation` proves it from a job-user process, and `legionr run`
+repeats that check before every job.
 
 ```sh
 LEGIONR_APP_ID=<your App ID, from the App's General page>
@@ -112,8 +126,8 @@ LEGIONR_APP_ID=<your App ID, from the App's General page>
 LEGIONR_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----
 …
 -----END RSA PRIVATE KEY-----"
-# …or a path to the .pem (keep it 0600, owned by the service user):
-LEGIONR_APP_PRIVATE_KEY_FILE=/etc/legion-runner/legion-app.pem
+# …or a path to the .pem (root:legionr 0640, see the table above):
+LEGIONR_APP_PRIVATE_KEY_FILE=/etc/legion-runner/app.pem
 # Optional: skip installation lookup by pinning the installation id.
 LEGIONR_APP_INSTALLATION_ID=12345678
 ```
@@ -128,12 +142,13 @@ legionr run                            # mints a fresh installation token per jo
 Resolution order is **`LEGIONR_TOKEN` → `GITHUB_TOKEN` → the App**, so a static
 token still wins where you set one (e.g. CI using `create-github-app-token`),
 and existing PAT setups are unchanged. Legion never writes the token to disk;
-it's minted in memory and stripped from the job's environment before the job
-runs.
+it is minted in memory and never reaches a job: jobs run as `legionr-job` with
+an environment rebuilt from a short allowlist, so no `LEGIONR_*` variable and no
+`GITHUB_TOKEN` gets through.
 
-> Store the private key only as a file readable by the service user, or as a
-> secret — never in the repo or the JSON config. The `.pem` is the App's
-> credential; treat it like an SSH private key.
+> Store the private key only as a file readable by the `legionr` user (and
+> never by `legionr-job`), or as a secret. Never in the repo or the JSON config.
+> The `.pem` is the App's credential; treat it like an SSH private key.
 
 ---
 
@@ -142,16 +157,16 @@ runs.
 - The private key is the App's credential. Store it only as a secret
   (`LEGION_*_PRIVATE_KEY`) or in a secrets manager — never in the repo or config.
 - Installation tokens are automatically scoped to the repos/orgs the App is
-  installed on and expire in ~1 hour. The runner never persists them; they're
-  read from the environment at call time and stripped from the job's environment
-  (see `Runner::spawn_command`).
+  installed on and expire in about an hour. The runner never persists them and
+  never passes them to a job: jobs run as a separate user with an allowlisted
+  environment (see `crates/legionr-core/src/jobuser.rs`).
 - Keep the App **private** to your account/orgs unless you intend others to
   install Legion Runner. Public just means "installable elsewhere"; it never
   exposes your key or your installations.
 - Legion signs a short-lived RS256 JWT with the App key to mint each
-  installation token. The signing uses the `ring`-backed `jsonwebtoken` crate —
-  deliberately not the pure-Rust `rsa` crate, which carries the unpatched
-  RUSTSEC-2023-0071 timing advisory that `cargo audit` would flag.
+  installation token. The signing uses `jsonwebtoken` with its `aws_lc_rs`
+  backend, deliberately not the pure-Rust `rsa` crate, which carries the
+  unpatched RUSTSEC-2023-0071 timing advisory that `cargo audit` would flag.
 
 [manifest]: https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest
 [cgt]: https://github.com/actions/create-github-app-token

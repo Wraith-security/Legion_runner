@@ -66,6 +66,79 @@ Unreleased section.
   mode inside containers; `disable-sudo` revokes sudo, hides the evidence and
   the job still finalizes.
 
+## [1.1.0] - 2026-11-25
+
+### Security
+- **Self-hosted runner: jobs no longer share a user with the control plane.**
+  Every job now runs as a separate, unprivileged `job_user` (default
+  `legionr-job`). Before, a job ran as the same `legionr` user that holds the
+  GitHub credential, so it could read the GitHub App private key (inline, or
+  through the key file the docs told operators to make readable by that user)
+  and the control plane's environment through `/proc`. With the App's
+  Administration and Actions write permissions, that key reached every repo the
+  App is installed on.
+- **Self-hosted runner: one job really is one job now.** The installed runner is
+  a read-only template owned by root. Each job runs from a fresh copy with its
+  own HOME and TMP under `work_dir`. After the job, every process still running
+  as the job user is killed and `work_dir` is emptied. Before, a job could
+  modify `run.sh` and the runner binaries, or plant `~/.gitconfig`, `~/.npmrc`
+  or cache entries in a HOME shared by every later job.
+- The job's environment is rebuilt from a short allowlist (`PATH`, locale,
+  proxy and CA variables) instead of removing two named variables. No
+  `LEGIONR_*` variable and no `GITHUB_TOKEN` reaches a job.
+- The job gets no capabilities, no supplementary groups and `no_new_privs`.
+  The control plane keeps only `CAP_SETUID` and `CAP_SETGID`, needed to start
+  the job as the job user.
+
+### Added
+- `legionr check-isolation`: proves, from a process running as the job user,
+  that a job cannot read the config, the env file or the App key, cannot write
+  the runner template, holds no capability and sees no `LEGIONR_*` variable.
+  `legionr run` performs the same check before every job and refuses to start
+  one that would not be isolated.
+- `legionr selftest-job --cmd CMD`: prepares an isolated job, runs CMD in it as
+  the job user and wipes it. Exercises the single-use lifecycle without GitHub.
+- `legionr provision --job-user NAME` and the `job_user` config key.
+- `legionr doctor` checks the job user, the read-only template, `work_dir`
+  ownership and that the config and credentials are unreadable to jobs.
+- `scripts/precheck.sh` (`make precheck`): every CI check plus reference-unit
+  drift, no em or en dashes in added lines, and a CHANGELOG entry for code
+  changes. Run it before merging.
+- The E2E workflow installs the real two-user layout and runs the isolation
+  check, an attacker job and a victim job under the generated unit's own
+  capabilities and syscall filter, via systemd, plus a negative case that must
+  fail.
+
+### Changed
+- **Upgrading a self-hosted host needs a reinstall step.** Re-run
+  `scripts/install.sh` (it creates `legionr-job`, makes the runner root-owned
+  and read-only, gives `_work` to the job user with mode 0700 and makes
+  `/etc/legion-runner` `root:legionr 0750`), keep the App key at
+  `root:legionr 0640`, then `legionr harden --install` to regenerate the unit.
+  `legionr run` refuses to start jobs until the layout is isolated.
+- The generated unit grants `CAP_SETUID CAP_SETGID`, re-allows `@setuid` and
+  `capset` after the `@privileged` deny, makes only `work_dir` writable, marks
+  the runner read-only, sets `UMask=0077` and drops the shared
+  `StateDirectory` HOME. `systemd-analyze security` rates it 1.7 (OK).
+- The JIT work folder is `_work` inside the job's runner copy, so the workspace
+  is wiped with everything else.
+- `systemd/legionr@.service` is regenerated from the generator, and the
+  precheck now fails when it drifts.
+
+### Fixed
+- `scripts/install.sh` failed whenever it looked up the latest runner version:
+  `curl | grep -m1` closed the pipe early, curl exited 23 and `pipefail` ended
+  the install. It now reads the whole response and matches in bash.
+- CI on `main` was red from September to November on RUSTSEC advisories in
+  quinn-proto, quinn-udp, rustls-webpki, webpki-roots, url and rustix, and on
+  the unmaintained `chrono`. Dependencies were bumped and `chrono` replaced with
+  `time` (#133). `RunnerEvent.at` now ends in `Z` instead of `+00:00`.
+
+## [1.0.61] - 2026-09-02
+
+Everything below was released up to and including v1.0.61. The section was
+never closed after each release, so earlier releases reused these notes.
+
 
 ### Added
 - **Curated egress presets (`allowed-presets`)**: opt-in per-ecosystem allowlists
