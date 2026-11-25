@@ -549,11 +549,25 @@ function defaultIface() {
   }
 }
 
-/// Pure: the IPv4 address of the Docker bridge from os.networkInterfaces()
-/// output ("" when there is no docker0).
-function dockerBridgeIp(ifaces = os.networkInterfaces()) {
+/// The IPv4 address of the Docker bridge ("" when there is no docker0).
+/// os.networkInterfaces() (libuv) lists only interfaces that are up AND
+/// running, and docker0 has no carrier until a container starts, so it is
+/// usually missing there; `ip` reports the address whatever the link state.
+function dockerBridgeIp(ifaces = os.networkInterfaces(), ipAddrText = null) {
   const a = (ifaces.docker0 || []).find((x) => (x.family === "IPv4" || x.family === 4) && !x.internal);
-  return a ? a.address : "";
+  if (a) return a.address;
+  let text = ipAddrText;
+  if (text === null) {
+    try {
+      text = execFileSync("ip", ["-4", "-o", "addr", "show", "dev", "docker0"], {
+        stdio: ["ignore", "pipe", "ignore"],
+      }).toString();
+    } catch {
+      text = "";
+    }
+  }
+  const m = (text || "").match(/\binet (\d+\.\d+\.\d+\.\d+)\//);
+  return m ? m[1] : "";
 }
 
 /// uid of a system user, or null.
@@ -947,6 +961,8 @@ async function startDnsCapture(opts = {}) {
           firewall.setContainerDns(privExec, bridge);
           out.containerDns = bridge;
           info(`   container DNS goes through the forwarder too (${bridge})`);
+        } else {
+          info("   no Docker bridge found: container DNS goes to the upstream resolver (names not filtered)");
         }
       } catch (e) {
         warn(`could not redirect DNS to the forwarder (${e.message}); DNS names are not filtered`);

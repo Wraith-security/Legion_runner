@@ -184,8 +184,10 @@ test("the Docker bridge address is read from the docker0 interface", () => {
     dockerBridgeIp({ docker0: [{ family: "IPv6", address: "fe80::1", internal: false }, { family: "IPv4", address: "172.17.0.1", internal: false }] }),
     "172.17.0.1",
   );
-  assert.equal(dockerBridgeIp({ eth0: [{ family: "IPv4", address: "10.0.0.4", internal: false }] }), "");
-  assert.equal(dockerBridgeIp({}), "");
+  // docker0 with no carrier is missing from os.networkInterfaces(); ip(8) still has it.
+  const ipOut = "3: docker0    inet 172.17.0.1/16 brd 172.17.255.255 scope global docker0\\       valid_lft forever\n";
+  assert.equal(dockerBridgeIp({ eth0: [{ family: "IPv4", address: "10.0.0.4", internal: false }] }, ipOut), "172.17.0.1");
+  assert.equal(dockerBridgeIp({}, ""), "");
 });
 
 test("container DNS can be re-pointed at the forwarder (flush, then DNAT to it)", () => {
