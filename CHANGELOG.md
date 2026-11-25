@@ -11,6 +11,41 @@ Unreleased section.
 
 ## [Unreleased]
 
+### Changed (Medium findings)
+- **eBPF capture sees UDP sent to an address.** The agent hooked only
+  `connect()`, so unconnected UDP (DNS, QUIC) was invisible. It now also hooks
+  `sendto` and `sendmsg`, de-duplicates those per (pid, address, port) for a
+  second in the kernel, and reports events lost to a full ring buffer
+  (`LEGIOND`), which the summary shows instead of losing them silently. The
+  claims are corrected: the agent reads the address at syscall entry (a second
+  thread can change it), does not see io_uring or sendmmsg, and the process name
+  is what the process calls itself. New agent lines only appear once
+  `action/agents.json` pins a release built from this change.
+- **`host:port` allowlist entries are enforced.** The firewall opened every port
+  on an allowlisted address. An entry with a port now opens only that port, TCP
+  and UDP, for static and dynamic (DNS) allows alike; an entry without a port
+  still opens every port, as documented.
+- **Local agent binaries must be root-only.** `LEGIONR_BPF`, `LEGIONR_FIM`, a
+  binary on PATH and one next to the action are used only if the file and its
+  directory are owned by root and writable by nobody else. Before, only
+  `LEGIONR_BPF` was checked, and FIM now runs as root.
+- **Container mode is refused.** It could not work under the hardened unit
+  (rootless Podman needs user namespaces and the setuid `newuidmap`, both
+  blocked) and was never run live; Docker's socket is root-equivalent. `legionr
+  provision --container`, `run` and `doctor` now say so plainly. Direct mode
+  already gives every job its own user and a fresh, wiped runner copy.
+- **The GitHub App asks for less.** An organization App now requests only the
+  organization's Self-hosted runners permission; a personal App requests
+  repository Administration (GitHub requires it for repository runners). Neither
+  requests Actions write, which only this repository's test harness used.
+- **GitHub's documented runner hosts.** Both egress lists now include every
+  exact host on GitHub's runner communication list (the self-hosted list adds
+  the broker and OIDC token hosts; the action allows the
+  `actions.githubusercontent.com` suffix). `*.blob.core.windows.net` stays
+  opt-in because it covers every Azure Storage account. New `docs/egress.md`
+  explains what each layer allows.
+
+
 ### Security
 - **Block mode no longer leaves DNS open.** Port 53 was allowed to every
   address, so a step could send data to its own server on port 53 or tunnel it

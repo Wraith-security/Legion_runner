@@ -21,7 +21,24 @@ pub enum ContainerBackend {
     Docker,
 }
 
+/// Why container mode is refused. Kept in one place so `provision`, `run` and
+/// `doctor` say the same thing.
+pub const UNSUPPORTED: &str = "container mode is not supported: rootless Podman needs user \
+namespaces and the setuid newuidmap helper, and the hardened unit blocks both \
+(RestrictNamespaces=true, NoNewPrivileges=true). Docker needs the daemon socket, which is \
+root-equivalent. Use direct mode (--container none): every job already runs as its own \
+unprivileged user from a fresh runner copy that is wiped afterwards";
+
 impl ContainerBackend {
+    /// Refuse every backend but `None` (see [`UNSUPPORTED`]).
+    pub fn ensure_supported(&self) -> anyhow::Result<()> {
+        if *self == ContainerBackend::None {
+            Ok(())
+        } else {
+            anyhow::bail!("{UNSUPPORTED}")
+        }
+    }
+
     /// The executable name, or `None` when no container is used.
     pub fn binary(&self) -> Option<&'static str> {
         match self {
@@ -79,6 +96,19 @@ impl ContainerBackend {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_direct_mode_is_supported() {
+        assert!(super::ContainerBackend::None.ensure_supported().is_ok());
+        for b in [
+            super::ContainerBackend::Podman,
+            super::ContainerBackend::Docker,
+        ] {
+            let err = b.ensure_supported().unwrap_err().to_string();
+            assert!(err.contains("not supported"), "{err}");
+            assert!(err.contains("--container none"), "{err}");
+        }
+    }
+
     use super::*;
 
     #[test]

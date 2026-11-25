@@ -40,24 +40,11 @@ function rootOwnedTrusted(p) {
   }
 }
 
-// Locate the Rust agent: explicit env, then PATH, then alongside the action.
+// Locate a local agent the action may run as root: LEGIONR_BPF, then PATH,
+// then next to the action, each only if root-owned in a root-owned directory
+// (see agents.trustedLocal). Otherwise null, and the pinned download is used.
 function binPath() {
-  // The env var is job-controlled and the agent runs as root, so only honor it
-  // when it points at a root-owned, non-job-writable binary; otherwise ignore it
-  // and fall through to PATH / download.
-  if (process.env.LEGIONR_BPF && rootOwnedTrusted(process.env.LEGIONR_BPF)) {
-    return process.env.LEGIONR_BPF;
-  }
-  try {
-    return (
-      execFileSync("sh", ["-c", "command -v legionr-bpf"], { stdio: ["ignore", "pipe", "ignore"] })
-        .toString()
-        .trim() || null
-    );
-  } catch {
-    const local = path.join(__dirname, "..", "bin", "legionr-bpf");
-    return fs.existsSync(local) ? local : null;
-  }
+  return agents.trustedLocal("legionr-bpf", "LEGIONR_BPF", __dirname);
 }
 
 // Kernel BTF is required for CO-RE load.
@@ -91,14 +78,28 @@ async function ensureBinary(opts = {}) {
   }
 }
 
-// Parse one agent output line into { ip, port, pid, comm } or null.
+// Parse one agent output line into { ip, port, pid, comm, proto } or null.
+// LEGIONC = connect() (tcp), LEGIONU = sendto/sendmsg to an address (udp).
 function parseConnect(line) {
-  if (!line || !line.startsWith("LEGIONC ")) return null;
+  if (!line) return null;
+  const proto = line.startsWith("LEGIONC ") ? "tcp" : line.startsWith("LEGIONU ") ? "udp" : null;
+  if (!proto) return null;
   const p = line.trim().split(/\s+/);
   if (p.length < 5) return null;
   const ip = p[1];
   if (!ip || ip === "0.0.0.0" || ip === "::" || ip.startsWith("127.") || ip === "::1") return null;
-  return { ip, port: p[2], pid: p[3], comm: p.slice(4).join(" ") };
+  return { ip, port: p[2], pid: p[3], comm: p.slice(4).join(" "), proto };
 }
 
-module.exports = { binPath, hasBtf, ensureBinary, parseConnect, parseSha256, sha256 };
+// The agent reports events it lost to a full ring buffer as "LEGIOND <total>".
+// Returns the last total in the log text (0 if none).
+function parseDrops(text) {
+  let total = 0;
+  for (const line of (text || "").split("\n")) {
+    const m = line.match(/^LEGIOND (\d+)\s*$/);
+    if (m) total = parseInt(m[1], 10);
+  }
+  return total;
+}
+
+module.exports = { binPath, hasBtf, ensureBinary, parseConnect, parseDrops, parseSha256, sha256 };

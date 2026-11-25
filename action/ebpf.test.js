@@ -12,6 +12,7 @@ test("parseConnect reads ip/port/pid/comm", () => {
     port: "443",
     pid: "1234",
     comm: "curl",
+    proto: "tcp",
   });
 });
 

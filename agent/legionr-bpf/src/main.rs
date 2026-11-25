@@ -1,17 +1,24 @@
 //! Legion Runner eBPF capture agent (userspace).
 //!
-//! Loads the tracepoint program, then streams one line per outbound connection
-//! to stdout in the protocol the action consumes:
+//! Loads the tracepoint programs, then streams one line per outbound event to
+//! stdout in the protocol the action consumes:
 //!
-//!   LEGIONC <ip> <port> <pid> <comm>
+//!   LEGIONC <ip> <port> <pid> <comm>   connect() (TCP, connected UDP)
+//!   LEGIONU <ip> <port> <pid> <comm>   sendto()/sendmsg() to an address (UDP)
+//!   LEGIOND <count>                    events lost to a full ring buffer
 //!
-//! Socket-layer capture means it sees the real connect() target regardless of
-//! how the name was resolved (nss-resolve, c-ares, hard-coded IP, …).
+//! Syscall-level capture sees the destination whatever resolved it (nss-resolve,
+//! c-ares, a hard-coded IP). It does not see io_uring or sendmmsg, and it reads
+//! the address at syscall entry; see the eBPF program for the full limits.
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use aya::{maps::RingBuf, programs::TracePoint, Ebpf};
-use legionr_bpf_common::ConnEvent;
+use aya::{
+    maps::{PerCpuArray, RingBuf},
+    programs::TracePoint,
+    Ebpf,
+};
+use legionr_bpf_common::{ConnEvent, PROTO_CONNECT};
 
 /// Render one event as a protocol line, or `None` to skip (loopback/empty).
 fn format_event(e: &ConnEvent) -> Option<String> {
@@ -27,7 +34,12 @@ fn format_event(e: &ConnEvent) -> Option<String> {
     if ip == "0.0.0.0" || ip == "::" || ip.starts_with("127.") || ip == "::1" {
         return None;
     }
-    Some(format!("LEGIONC {ip} {} {} {comm}", e.dport, e.pid))
+    let tag = if e.proto == PROTO_CONNECT {
+        "LEGIONC"
+    } else {
+        "LEGIONU"
+    };
+    Some(format!("{tag} {ip} {} {} {comm}", e.dport, e.pid))
 }
 
 fn main() -> anyhow::Result<()> {
@@ -36,17 +48,38 @@ fn main() -> anyhow::Result<()> {
         "/legionr-bpf-ebpf"
     )))?;
 
-    let prog: &mut TracePoint = bpf
-        .program_mut("legionr_connect")
-        .expect("program present")
-        .try_into()?;
-    prog.load()?;
-    prog.attach("syscalls", "sys_enter_connect")?;
+    for (prog_name, tracepoint) in [
+        ("legionr_connect", "sys_enter_connect"),
+        ("legionr_sendto", "sys_enter_sendto"),
+        ("legionr_sendmsg", "sys_enter_sendmsg"),
+    ] {
+        let prog: &mut TracePoint = bpf
+            .program_mut(prog_name)
+            .expect("program present")
+            .try_into()?;
+        prog.load()?;
+        prog.attach("syscalls", tracepoint)?;
+    }
 
     let mut ring = RingBuf::try_from(bpf.take_map("EVENTS").expect("EVENTS map"))?;
+    let drops: PerCpuArray<_, u64> =
+        PerCpuArray::try_from(bpf.take_map("DROPS").expect("DROPS map"))?;
+    let mut reported_drops = 0u64;
+    let mut last_check = std::time::Instant::now();
     let stdout = std::io::stdout();
 
     loop {
+        if last_check.elapsed() >= std::time::Duration::from_secs(1) {
+            last_check = std::time::Instant::now();
+            let total: u64 = drops.get(&0, 0).map(|v| v.iter().sum()).unwrap_or(0);
+            if total != reported_drops {
+                reported_drops = total;
+                use std::io::Write;
+                let mut h = stdout.lock();
+                let _ = writeln!(h, "LEGIOND {total}");
+                let _ = h.flush();
+            }
+        }
         let mut emitted = false;
         while let Some(item) = ring.next() {
             if item.len() >= core::mem::size_of::<ConnEvent>() {
@@ -86,8 +119,12 @@ mod tests {
             addr4: u32::to_be(u32::from(Ipv4Addr::new(140, 82, 114, 3))),
             addr6: [0; 16],
             comm: comm("curl"),
+            proto: PROTO_CONNECT,
         };
-        assert_eq!(format_event(&e).unwrap(), "LEGIONC 140.82.114.3 443 1234 curl");
+        assert_eq!(
+            format_event(&e).unwrap(),
+            "LEGIONC 140.82.114.3 443 1234 curl"
+        );
     }
 
     #[test]
@@ -99,9 +136,13 @@ mod tests {
             addr4: 0,
             addr6: Ipv6Addr::new(0x2606, 0x50c0, 0, 0, 0, 0, 0, 0x153).octets(),
             comm: comm("git"),
+            proto: PROTO_CONNECT,
         };
         let line = format_event(&e).unwrap();
-        assert!(line.starts_with("LEGIONC 2606:50c0::153 443 7 git"), "{line}");
+        assert!(
+            line.starts_with("LEGIONC 2606:50c0::153 443 7 git"),
+            "{line}"
+        );
     }
 
     #[test]
@@ -113,10 +154,38 @@ mod tests {
             addr4: u32::to_be(u32::from(Ipv4Addr::new(127, 0, 0, 1))),
             addr6: [0; 16],
             comm: comm("x"),
+            proto: PROTO_CONNECT,
         };
         assert!(format_event(&lo).is_none());
 
-        let unknown = ConnEvent { family: 99, dport: 1, pid: 1, addr4: 0, addr6: [0; 16], comm: comm("x") };
+        let unknown = ConnEvent {
+            family: 99,
+            dport: 1,
+            pid: 1,
+            addr4: 0,
+            addr6: [0; 16],
+            comm: comm("x"),
+            proto: PROTO_CONNECT,
+        };
         assert!(format_event(&unknown).is_none());
+    }
+
+    #[test]
+    fn udp_sends_are_tagged_legionu() {
+        let e = ConnEvent {
+            family: 2,
+            dport: 53,
+            pid: 99,
+            addr4: u32::to_be(u32::from(Ipv4Addr::new(10, 0, 0, 2))),
+            addr6: [0; 16],
+            comm: comm("dig"),
+            proto: legionr_bpf_common::PROTO_SENDTO,
+        };
+        assert_eq!(format_event(&e).unwrap(), "LEGIONU 10.0.0.2 53 99 dig");
+        let m = ConnEvent {
+            proto: legionr_bpf_common::PROTO_SENDMSG,
+            ..e
+        };
+        assert!(format_event(&m).unwrap().starts_with("LEGIONU "));
     }
 }
