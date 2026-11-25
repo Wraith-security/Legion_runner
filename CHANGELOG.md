@@ -69,6 +69,9 @@ Unreleased section.
   precheck now fails when it drifts.
 
 ### Fixed
+- `scripts/install.sh` failed whenever it looked up the latest runner version:
+  `curl | grep -m1` closed the pipe early, curl exited 23 and `pipefail` ended
+  the install. It now reads the whole response and matches in bash.
 - CI on `main` was red from September to November on RUSTSEC advisories in
   quinn-proto, quinn-udp, rustls-webpki, webpki-roots, url and rustix, and on
   the unmaintained `chrono`. Dependencies were bumped and `chrono` replaced with

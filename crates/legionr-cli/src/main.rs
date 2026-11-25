@@ -605,19 +605,15 @@ async fn doctor(config: Option<PathBuf>) -> Result<()> {
 async fn check_isolation(config: Option<PathBuf>) -> Result<()> {
     let runner = isolated_runner(config)?;
     let cfg = runner.config();
-    println!(
-        "control plane: uid {}  job user: {}",
-        legionr_core::jobuser::current_uid(),
-        cfg.job_user
-    );
+    println!("control plane: {}  job user: {}", cfg.run_as, cfg.job_user);
     let id = runner.job_identity()?;
     runner.prepare(id).await?;
     let fails = runner.verify_isolation(id).await?;
     runner.wipe(id).await?;
     if fails.is_empty() {
         println!(
-            "✔ job runs as uid {} with no capabilities and a clean environment",
-            id.uid
+            "✔ job runs as {} with no capabilities and a clean environment",
+            cfg.job_user
         );
         println!("✔ job cannot read the config, env file or App key, or write the runner template");
         Ok(())

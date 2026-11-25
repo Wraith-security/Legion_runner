@@ -72,8 +72,13 @@ if [ -x "${RUNNER_DIR}/run.sh" ]; then
 else
     if [ -z "${RUNNER_VERSION:-}" ]; then
         log "resolving latest actions/runner release"
-        RUNNER_VERSION="$(curl -fsSL https://api.github.com/repos/actions/runner/releases/latest \
-            | grep -m1 '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')"
+        # Read the whole response, then match in bash. Piping curl into
+        # `grep -m1` closed the pipe early, curl exited 23 and, under pipefail,
+        # took the install down with it.
+        latest_json="$(curl -fsSL https://api.github.com/repos/actions/runner/releases/latest)"
+        if [[ "$latest_json" =~ \"tag_name\":[[:space:]]*\"v([^\"]+)\" ]]; then
+            RUNNER_VERSION="${BASH_REMATCH[1]}"
+        fi
         [ -n "$RUNNER_VERSION" ] || die "could not resolve runner version (set RUNNER_VERSION)"
     fi
     TARBALL="actions-runner-linux-${RUNNER_ARCH}-${RUNNER_VERSION}.tar.gz"
